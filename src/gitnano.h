@@ -84,6 +84,10 @@ int gitnano_add(const char *path);
 int gitnano_commit(const char *message);
 int gitnano_checkout(const char *commit_sha1);
 int gitnano_log();
+int gitnano_diff(const char *commit1, const char *commit2);
+void print_usage();
+
+// Reference management functions (refs.c)
 int get_head_ref(char *ref_out);
 int set_head_ref(const char *ref);
 int get_current_commit(char *sha1_out);
