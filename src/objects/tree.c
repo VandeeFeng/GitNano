@@ -463,21 +463,25 @@ int tree_restore(const char *tree_sha1, const char *target_dir) {
         return -1;
     }
 
-    // First, collect target files
+    printf("Restoring tree %s to %s...\n", tree_sha1, target_dir);
+
+    // First, collect target files for cleanup operations
     file_entry *target_files = NULL;
     if ((err = collect_target_files(tree_sha1, "", &target_files)) != 0) {
         printf("ERROR: collect_target_files: %d\n", err);
         return err;
     }
 
-    // Extract tree files
+    // Extract tree files (create/update files and directories)
+    printf("Extracting files from tree...\n");
     if ((err = extract_tree_recursive(tree_sha1, target_dir)) != 0) {
         printf("ERROR: extract_tree_recursive: %d\n", err);
         free_file_list(target_files);
         return err;
     }
 
-    // Clean up files not in target tree
+    // Clean up files not in target tree (delete files that shouldn't exist)
+    printf("Cleaning up files not in target tree...\n");
     if ((err = cleanup_extra_files(target_dir, target_files)) != 0) {
         printf("ERROR: cleanup_extra_files: %d\n", err);
         free_file_list(target_files);
@@ -485,5 +489,6 @@ int tree_restore(const char *tree_sha1, const char *target_dir) {
     }
 
     free_file_list(target_files);
+    printf("Tree restore completed successfully\n");
     return 0;
 }

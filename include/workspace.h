@@ -17,8 +17,9 @@ int get_workspace_file_path(const char *original_file_path, char *workspace_file
 int workspace_init();
 int workspace_exists();
 int workspace_is_initialized();
-int workspace_sync_single_file(const char *path);
-int workspace_sync_from_single_file(const char *path);
+int workspace_push_file(const char *path);
+int workspace_pullback_file(const char *path);
+int workspace_sync_all_from_workspace();
 
 
 // File operations in workspace

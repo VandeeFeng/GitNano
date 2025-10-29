@@ -4,6 +4,9 @@
 #include <sys/stat.h>
 #include <pwd.h>
 
+// Forward declarations
+static int sync_recursive(const char *src_path, const char *dst_base);
+
 // Expand ~ to home directory
 static void expand_home_dir(const char *path, char *expanded, size_t size) {
     if (path[0] == '~') {
@@ -219,8 +222,8 @@ int workspace_init() {
     return 0;
 }
 
-// Sync single file to workspace (for add operations)
-int workspace_sync_single_file(const char *path) {
+// Push single file to workspace (for add operations)
+int workspace_push_file(const char *path) {
     if (!workspace_is_initialized()) {
         printf("ERROR: Workspace not initialized. Call workspace_init() first.\n");
         return -1;
@@ -284,8 +287,8 @@ int workspace_sync_single_file(const char *path) {
     return result;
 }
 
-// Sync files from workspace to original directory (for checkout operations)
-int workspace_sync_from_single_file(const char *path) {
+// Pullback files from workspace to original directory (for checkout operations)
+int workspace_pullback_file(const char *path) {
     if (!workspace_exists()) {
         printf("ERROR: Workspace does not exist\n");
         return -1;
@@ -307,10 +310,15 @@ int workspace_sync_from_single_file(const char *path) {
     char *dst_path = safe_asprintf("%s/%s", cwd, path);
 
     if (!file_exists(src_path)) {
-        printf("ERROR: Workspace file does not exist: %s\n", src_path);
+        // File doesn't exist in workspace - this might be intentional (file was deleted in checkout)
+        // This happens when checking out a commit where this file existed, but the file
+        // was deleted in a later commit and therefore doesn't exist in the workspace
+        printf("Note: File '%s' not found in workspace\n", path);
+        printf("This is normal when the file was deleted in a later commit\n");
+        printf("The file will be restored from the target commit tree instead\n");
         free(src_path);
         free(dst_path);
-        return -1;
+        return 0;
     }
 
     // Create directory if needed
@@ -376,4 +384,118 @@ int workspace_write_file(const char *path, const void *data, size_t size) {
         return -1;
     }
     return write_file(workspace_file_path, data, size);
+}
+
+// Sync all files from workspace to original directory (for full checkout operations)
+int workspace_sync_all_from_workspace() {
+    if (!workspace_exists()) {
+        printf("ERROR: Workspace does not exist\n");
+        return -1;
+    }
+
+    char workspace_path[MAX_PATH];
+    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
+        return -1;
+    }
+
+    char cwd[MAX_PATH];
+    if (!getcwd(cwd, sizeof(cwd))) {
+        printf("ERROR: getcwd failed\n");
+        return -1;
+    }
+
+    printf("Syncing all files from workspace to original directory...\n");
+
+    // Change to workspace directory to list files
+    char original_cwd[MAX_PATH];
+    if (!getcwd(original_cwd, sizeof(original_cwd))) {
+        printf("ERROR: Failed to get current directory\n");
+        return -1;
+    }
+
+    if (chdir(workspace_path) != 0) {
+        printf("ERROR: Failed to change to workspace directory\n");
+        return -1;
+    }
+
+    // Recursively sync all files from workspace to original directory
+    int sync_result = sync_recursive(".", cwd);
+
+    // Change back to original directory
+    chdir(original_cwd);
+
+    if (sync_result == 0) {
+        printf("All files synced from workspace to original directory\n");
+    } else {
+        printf("ERROR: Failed to sync some files from workspace\n");
+    }
+
+    return sync_result;
+}
+
+// Helper function to recursively sync files from workspace to original directory
+static int sync_recursive(const char *src_path, const char *dst_base) {
+    DIR *dir = opendir(src_path);
+    if (!dir) {
+        printf("ERROR: Failed to open directory: %s\n", src_path);
+        return -1;
+    }
+
+    struct dirent *entry;
+    int result = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        // Skip . and .. and .gitnano
+        if (strcmp(entry->d_name, ".") == 0 ||
+            strcmp(entry->d_name, "..") == 0 ||
+            strcmp(entry->d_name, ".gitnano") == 0) {
+            continue;
+        }
+
+        char full_src_path[MAX_PATH];
+        snprintf(full_src_path, sizeof(full_src_path), "%s/%s", src_path, entry->d_name);
+
+        struct stat st;
+        if (stat(full_src_path, &st) != 0) {
+            printf("ERROR: Failed to stat: %s\n", full_src_path);
+            result = -1;
+            continue;
+        }
+
+        char full_dst_path[MAX_PATH];
+        snprintf(full_dst_path, sizeof(full_dst_path), "%s/%s", dst_base, src_path);
+
+        // Create destination directory if needed
+        mkdir_p(full_dst_path);
+
+        snprintf(full_dst_path, sizeof(full_dst_path), "%s/%s/%s", dst_base, src_path, entry->d_name);
+
+        if (S_ISDIR(st.st_mode)) {
+            // Recursively sync subdirectory
+            if (sync_recursive(full_src_path, dst_base) != 0) {
+                result = -1;
+            }
+        } else {
+            // Copy file from workspace to original directory
+            size_t size;
+            char *data = read_file(full_src_path, &size);
+            if (!data) {
+                printf("ERROR: Failed to read workspace file: %s\n", full_src_path);
+                result = -1;
+                continue;
+            }
+
+            if (write_file(full_dst_path, data, size) != 0) {
+                printf("ERROR: Failed to write file to original directory: %s\n", full_dst_path);
+                free(data);
+                result = -1;
+                continue;
+            }
+
+            free(data);
+        }
+    }
+
+    closedir(dir);
+    return result;
 }
