@@ -1,3 +1,0 @@
-This is a test file for testing gitnano commit functionality.
-It tests multiple commits and the SHA1_HEX_SIZE fix.
-Modified content for second commit.

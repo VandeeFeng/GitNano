@@ -270,8 +270,7 @@ int gitnano_checkout(const char *reference, const char *path) {
         return -1;
     }
 
-    checkout_operation_stats stats = {0};
-
+  
     if (path && strlen(path) > 0) {
         // Path checkout - restore specific file/directory in workspace
         printf("Restoring '%s' from %s...\n", path, reference);
@@ -279,14 +278,12 @@ int gitnano_checkout(const char *reference, const char *path) {
         char tree_sha1[SHA1_HEX_SIZE];
         if ((err = commit_get_tree(commit_sha1, tree_sha1)) != 0) {
             printf("ERROR: commit_get_tree: %d\n", err);
-            free_checkout_stats(&stats);
             chdir(original_cwd);
             return err;
         }
 
         if ((err = tree_restore_path(tree_sha1, path, path)) != 0) {
             printf("ERROR: tree_restore_path: %d\n", err);
-            free_checkout_stats(&stats);
             chdir(original_cwd);
             return err;
         }
@@ -307,14 +304,12 @@ int gitnano_checkout(const char *reference, const char *path) {
         char tree_sha1[SHA1_HEX_SIZE];
         if ((err = commit_get_tree(commit_sha1, tree_sha1)) != 0) {
             printf("ERROR: commit_get_tree: %d\n", err);
-            free_checkout_stats(&stats);
             chdir(original_cwd);
             return err;
         }
 
         if ((err = tree_restore(tree_sha1, ".")) != 0) {
             printf("ERROR: tree_restore: %d\n", err);
-            free_checkout_stats(&stats);
             chdir(original_cwd);
             return err;
         }
@@ -322,7 +317,6 @@ int gitnano_checkout(const char *reference, const char *path) {
         // Update HEAD to point to the checked out commit
         if ((err = set_head_ref(commit_sha1)) != 0) {
             printf("ERROR: set_head_ref: %d\n", err);
-            free_checkout_stats(&stats);
             chdir(original_cwd);
             return err;
         }
@@ -350,7 +344,6 @@ int gitnano_checkout(const char *reference, const char *path) {
         printf("Checked out %s\n", reference);
     }
 
-    free_checkout_stats(&stats);
     return 0;
 }
 

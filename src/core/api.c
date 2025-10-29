@@ -35,67 +35,6 @@ int gitnano_create_snapshot(const char *message, char *snapshot_id) {
     return 0;
 }
 
-// List all snapshots
-int gitnano_list_snapshots(gitnano_snapshot_info **snapshots, int *count) {
-    int err;
-    *snapshots = NULL;
-    *count = 0;
-
-    if (!file_exists(GITNANO_DIR)) {
-        return -1;
-    }
-
-    char current_sha1[SHA1_HEX_SIZE];
-    if (get_current_commit(current_sha1) != 0) {
-        return 0; // No commits
-    }
-
-    int capacity = 10;
-    *snapshots = safe_malloc(capacity * sizeof(gitnano_snapshot_info));
-    if (!*snapshots) {
-        return -1;
-    }
-
-    while (strlen(current_sha1) > 0) {
-        if (*count >= capacity) {
-            capacity *= 2;
-            gitnano_snapshot_info *new_snapshots = safe_realloc(*snapshots, capacity * sizeof(gitnano_snapshot_info));
-            if (!new_snapshots) {
-                free(*snapshots);
-                *snapshots = NULL;
-                return -1;
-            }
-            *snapshots = new_snapshots;
-        }
-
-        gitnano_commit_info commit;
-        if ((err = commit_parse(current_sha1, &commit)) != 0) {
-            printf("ERROR: commit_parse: %d\n", err);
-            break;
-        }
-
-        gitnano_snapshot_info *snapshot = &(*snapshots)[*count];
-        strcpy(snapshot->id, current_sha1);
-        strncpy(snapshot->message, commit.message, sizeof(snapshot->message) - 1);
-        snapshot->message[sizeof(snapshot->message) - 1] = '\0';
-        strncpy(snapshot->author, commit.author, sizeof(snapshot->author) - 1);
-        snapshot->author[sizeof(snapshot->author) - 1] = '\0';
-        strncpy(snapshot->timestamp, commit.timestamp, sizeof(snapshot->timestamp) - 1);
-        snapshot->timestamp[sizeof(snapshot->timestamp) - 1] = '\0';
-        if ((err = commit_get_tree(current_sha1, snapshot->tree_hash)) != 0) {
-            printf("ERROR: commit_get_tree: %d\n", err);
-            break;
-        }
-
-        (*count)++;
-
-        if (commit_get_parent(current_sha1, current_sha1) != 0) {
-            break;
-        }
-    }
-
-    return 0;
-}
 
 // Restore to a specific snapshot
 int gitnano_restore_snapshot(const char *snapshot_id) {
@@ -115,69 +54,6 @@ int gitnano_restore_snapshot(const char *snapshot_id) {
     return 0;
 }
 
-// Get file content at specific snapshot
-int gitnano_get_file_at_snapshot(const char *snapshot_id, const char *file_path,
-                                 char **content, size_t *size) {
-    int err;
-    if (!file_exists(GITNANO_DIR)) {
-        return -1;
-    }
-
-    if (!commit_exists(snapshot_id)) {
-        return -1;
-    }
-
-    // Get tree from commit
-    char tree_sha1[SHA1_HEX_SIZE];
-    if ((err = commit_get_tree(snapshot_id, tree_sha1)) != 0) {
-        printf("ERROR: commit_get_tree: %d\n", err);
-        return err;
-    }
-
-    // Parse tree to find file
-    tree_entry *entries;
-    if ((err = tree_parse(tree_sha1, &entries)) != 0) {
-        printf("ERROR: tree_parse: %d\n", err);
-        return err;
-    }
-
-    // This is a simplified implementation - in reality, we'd need to
-    // traverse the tree structure recursively
-    tree_entry *entry = tree_find(entries, file_path);
-    if (!entry) {
-        tree_free(entries);
-        return -1;
-    }
-
-    // Read blob content
-    gitnano_object obj;
-    if ((err = object_read(entry->sha1, &obj)) != 0) {
-        tree_free(entries);
-        return err;
-    }
-
-    if (strcmp(obj.type, "blob") != 0) {
-        object_free(&obj);
-        tree_free(entries);
-        return -1;
-    }
-
-    *content = safe_malloc(obj.size + 1);
-    if (!*content) {
-        object_free(&obj);
-        tree_free(entries);
-        return -1;
-    }
-
-    memcpy(*content, obj.data, obj.size);
-    (*content)[obj.size] = '\0';
-    *size = obj.size;
-
-    object_free(&obj);
-    tree_free(entries);
-
-    return 0;
-}
 
 // Add file to file list
 static int add_file_to_list(file_entry **list, const char *path, const char *sha1) {
@@ -436,8 +312,3 @@ int gitnano_status(gitnano_status_info *status) {
     return 0;
 }
 
-// Cleanup function
-void gitnano_cleanup() {
-    // Free any global resources if needed
-    // Currently not needed for this implementation
-}

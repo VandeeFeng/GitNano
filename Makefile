@@ -56,14 +56,14 @@ $(TARGET): $(LIB_OBJECTS) $(MAIN_OBJECT)
 	$(CC) $(LIB_OBJECTS) $(MAIN_OBJECT) $(LDFLAGS) -o $@
 
 # Test runner uses library objects
-$(TEST_TARGET): $(LIB_OBJECTS) test_runner.c
-	$(CC) $(CFLAGS) $(LIB_OBJECTS) test_runner.c $(LDFLAGS) -o $@
+$(TEST_TARGET): $(LIB_OBJECTS) $(TESTDIR)/test_runner.c
+	$(CC) $(CFLAGS) $(LIB_OBJECTS) $(TESTDIR)/test_runner.c $(LDFLAGS) -o $@
 
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
 clean:
-	rm -rf $(BUILDDIR) $(TARGET) $(TEST_TARGET)
+	rm -rf $(BUILDDIR) $(TARGET) $(TEST_TARGET) test_runner
 
 # Default install location
 PREFIX = ~/.local

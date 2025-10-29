@@ -3,12 +3,22 @@
 
 // Get current user information
 void get_current_user(char *author, size_t size) {
-    struct passwd *pw = getpwuid(getuid());
-    if (pw) {
-        snprintf(author, size, "%s <%s@%s>", pw->pw_gecos ? pw->pw_gecos : pw->pw_name,
-                 pw->pw_name, "localhost");
+    const char *username = getenv("USER");
+    if (!username) {
+        username = getenv("LOGNAME");
+    }
+    if (!username) {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw) {
+            username = pw->pw_name;
+        }
+    }
+    if (username) {
+        strncpy(author, username, size - 1);
+        author[size - 1] = '\0';
     } else {
-        snprintf(author, size, "unknown <unknown@localhost>");
+        strncpy(author, "unknown", size - 1);
+        author[size - 1] = '\0';
     }
 }
 
@@ -59,14 +69,6 @@ int commit_create(const char *tree_sha1, const char *parent_sha1,
 }
 
 // Parse commit object
-static const char* find_commit_field(const char* commit_data, const char* field_name) {
-    const char* field = strstr(commit_data, field_name);
-    if (field) {
-        return field + strlen(field_name);
-    }
-    return NULL;
-}
-
 int commit_parse(const char *sha1, gitnano_commit_info *commit) {
     int err;
     gitnano_object obj;
@@ -79,33 +81,75 @@ int commit_parse(const char *sha1, gitnano_commit_info *commit) {
     memset(commit, 0, sizeof(gitnano_commit_info));
     const char *data = (const char *)obj.data;
 
-    const char *tree = find_commit_field(data, "tree ");
-    if (tree) sscanf(tree, "%40s", commit->tree_sha1);
-
-    const char *parent = find_commit_field(data, "parent ");
-    if (parent) sscanf(parent, "%40s", commit->parent_sha1);
-
-    const char *author = find_commit_field(data, "author ");
-    if (author) {
-        const char *email_start = strchr(author, '<');
-        if (email_start) {
-            strncpy(commit->author, author, email_start - author - 1);
-            commit->author[sizeof(commit->author) - 1] = '\0';
-        }
+    const char *tree = strstr(data, "tree ");
+    if (tree) {
+        tree += strlen("tree ");
+        sscanf(tree, "%40s", commit->tree_sha1);
     }
 
-    const char *committer = find_commit_field(data, "committer ");
-    if (committer) {
-        const char *timestamp_start = strrchr(committer, ' ');
-        if (timestamp_start) {
-            sscanf(timestamp_start + 1, "%s", commit->timestamp);
+    const char *parent = strstr(data, "parent ");
+    if (parent) {
+        parent += strlen("parent ");
+        sscanf(parent, "%40s", commit->parent_sha1);
+    }
+
+    // Parse author line (format: "author <username> <timestamp>")
+    const char *author = strstr(data, "author ");
+    if (author) {
+        author += strlen("author ");
+        // Find where timestamp starts (last space in the line)
+        const char *line_end = strchr(author, '\n');
+        if (line_end) {
+            // Work backwards to find the timestamp (starts after last space)
+            const char *timestamp_start = line_end - 1;
+            while (timestamp_start > author && *timestamp_start != ' ') {
+                timestamp_start--;
+            }
+            if (timestamp_start > author) {
+                timestamp_start++; // Skip the space
+
+                // Extract timestamp
+                size_t timestamp_len = line_end - timestamp_start;
+                if (timestamp_len > sizeof(commit->timestamp) - 1) {
+                    timestamp_len = sizeof(commit->timestamp) - 1;
+                }
+                strncpy(commit->timestamp, timestamp_start, timestamp_len);
+                commit->timestamp[timestamp_len] = '\0';
+
+                // Extract author (everything before timestamp)
+                size_t author_len = timestamp_start - author - 1; // -1 to exclude space
+                if (author_len > sizeof(commit->author) - 1) {
+                    author_len = sizeof(commit->author) - 1;
+                }
+                strncpy(commit->author, author, author_len);
+                commit->author[author_len] = '\0';
+            }
         }
     }
 
     const char *message = strstr(data, "\n\n");
     if (message) {
-        strncpy(commit->message, message + 2, sizeof(commit->message) - 1);
-        commit->message[sizeof(commit->message) - 1] = '\0';
+        message += 2; // Skip the two newlines
+        // Find the end of the message (next double newline or end of data)
+        const char *message_end = strstr(message, "\n\n");
+        if (!message_end) {
+            // If no double newline found, go to end of data
+            message_end = message + strlen(message);
+        }
+
+        // Calculate message length (excluding trailing newlines)
+        size_t message_len = message_end - message;
+        // Remove trailing newlines from message
+        while (message_len > 0 && (message[message_len - 1] == '\n' || message[message_len - 1] == '\r')) {
+            message_len--;
+        }
+
+        if (message_len > sizeof(commit->message) - 1) {
+            message_len = sizeof(commit->message) - 1;
+        }
+
+        strncpy(commit->message, message, message_len);
+        commit->message[message_len] = '\0';
     }
 
     object_free(&obj);

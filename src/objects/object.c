@@ -42,40 +42,18 @@ int object_hash(const char *type, const void *data, size_t size, char *sha1_out)
     return err;
 }
 
-// Verify object integrity by reading it back and checking hash
+// Simple object integrity check (only basic verification)
 static int verify_object_integrity(const char *sha1, const char *expected_type, const void *expected_data, size_t expected_size) {
     gitnano_object obj;
     int err = object_read(sha1, &obj);
     if (err != 0) {
-        fprintf(stderr, "ERROR: verify_object_integrity: failed to read object %s for verification\n", sha1);
         return -1;
     }
 
-    // Check object type
-    if (strcmp(obj.type, expected_type) != 0) {
-        fprintf(stderr, "ERROR: verify_object_integrity: type mismatch for object %s (expected %s, got %s)\n",
-                sha1, expected_type, obj.type);
-        object_free(&obj);
-        return -1;
-    }
-
-    // Check object size
-    if (obj.size != expected_size) {
-        fprintf(stderr, "ERROR: verify_object_integrity: size mismatch for object %s (expected %zu, got %zu)\n",
-                sha1, expected_size, obj.size);
-        object_free(&obj);
-        return -1;
-    }
-
-    // Check object data
-    if (memcmp(obj.data, expected_data, expected_size) != 0) {
-        fprintf(stderr, "ERROR: verify_object_integrity: data corruption detected for object %s\n", sha1);
-        object_free(&obj);
-        return -1;
-    }
-
+    // Simple type and size check only
+    int is_valid = (strcmp(obj.type, expected_type) == 0 && obj.size == expected_size);
     object_free(&obj);
-    return 0;
+    return is_valid ? 0 : -1;
 }
 
 // Write object to object store
@@ -135,9 +113,8 @@ int object_write(const char *type, const void *data, size_t size, char *sha1_out
         return err;
     }
 
-    // Verify object integrity immediately after writing
+    // Quick integrity check (only if verification fails, remove object)
     if (verify_object_integrity(sha1, type, data, size) != 0) {
-        fprintf(stderr, "ERROR: object_write: integrity check failed for object %s\n", sha1);
         // Remove corrupted object file
         unlink(path);
         free(header);

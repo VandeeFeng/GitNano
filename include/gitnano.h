@@ -60,14 +60,6 @@ typedef struct {
     char message[1024];
 } gitnano_commit_info;
 
-// Snapshot information for API
-typedef struct {
-    char id[SHA1_HEX_SIZE];
-    char message[1024];
-    char author[256];
-    char timestamp[32];
-    char tree_hash[SHA1_HEX_SIZE];
-} gitnano_snapshot_info;
 
 // File entry structure for diff operations
 typedef struct file_entry {
@@ -112,7 +104,6 @@ int gitnano_commit(const char *message);
 int gitnano_checkout(const char *reference, const char *path);
 int gitnano_log();
 int gitnano_diff(const char *commit1, const char *commit2);
-int gitnano_sync(const char *direction, const char *path);
 void print_usage();
 
 // Reference management functions (refs.c)
@@ -203,14 +194,10 @@ int workspace_write_file(const char *path, const void *data, size_t size);
 
 // High-level API functions
 int gitnano_create_snapshot(const char *message, char *snapshot_id);
-int gitnano_list_snapshots(gitnano_snapshot_info **snapshots, int *count);
 int gitnano_restore_snapshot(const char *snapshot_id);
-int gitnano_get_file_at_snapshot(const char *snapshot_id, const char *file_path,
-                                 char **content, size_t *size);
 int gitnano_compare_snapshots(const char *snapshot1, const char *snapshot2,
                               gitnano_diff_result **diff);
 void gitnano_free_diff(gitnano_diff_result *diff);
 int gitnano_status(gitnano_status_info *status);
-void gitnano_cleanup();
 
 #endif // GITNANO_H
