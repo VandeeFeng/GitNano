@@ -2,23 +2,11 @@
 #include "gitnano.h"
 #include <dirent.h>
 
-// Helper structure for file comparison during restore
-typedef struct file_entry {
-    char path[MAX_PATH];
-    char sha1[SHA1_HEX_SIZE];
-    struct file_entry *next;
-} file_entry;
-
 static int tree_serialize(tree_entry *entries, char **data_out, size_t *size_out);
-static int extract_blob(const char *sha1, const char *target_path);
-static int extract_tree_recursive(const char *tree_sha1, const char *base_path);
-static int collect_working_files(const char *dir_path, file_entry **files);
-static int cleanup_extra_files(const char *base_path, file_entry *target_files);
-static void free_file_list(file_entry *list);
 
 // Create a new tree entry
 tree_entry *tree_entry_new(const char *mode, const char *type,
-                          const char *sha1, const char *name) {
+                           const char *sha1, const char *name) {
     tree_entry *entry = malloc(sizeof(tree_entry));
     if (!entry) return NULL;
 
@@ -106,7 +94,7 @@ int tree_build(const char *path, char *sha1_out) {
             }
 
             tree_entry *dir_entry = tree_entry_new("040000", "tree",
-                                                  subtree_sha1, entry->d_name);
+                                                   subtree_sha1, entry->d_name);
             if (!dir_entry) {
                 printf("ERROR: tree_entry_new: %d\n", -1);
                 tree_free(entries);
@@ -134,7 +122,7 @@ int tree_build(const char *path, char *sha1_out) {
             }
 
             tree_entry *file_entry = tree_entry_new(mode, "blob",
-                                                   blob_sha1, entry->d_name);
+                                                    blob_sha1, entry->d_name);
             if (!file_entry) {
                 printf("ERROR: tree_entry_new: %d\n", -1);
                 tree_free(entries);
@@ -313,235 +301,6 @@ tree_entry *tree_find(tree_entry *entries, const char *name) {
     return NULL;
 }
 
-// Extract a blob object to the filesystem
-static int extract_blob(const char *sha1, const char *target_path) {
-    int err;
-    char *data = NULL;
-    size_t size = 0;
-
-    if ((err = blob_read(sha1, &data, &size)) != 0) {
-        printf("ERROR: blob_read: %d\n", err);
-        return err;
-    }
-
-    // Create directory if needed
-    char *dir_path = safe_strdup(target_path);
-    if (!dir_path) {
-        free(data);
-        return -1;
-    }
-
-    char *last_slash = strrchr(dir_path, '/');
-    if (last_slash) {
-        *last_slash = '\0';
-        if ((err = mkdir_p(dir_path)) != 0) {
-            printf("ERROR: mkdir_p: %d\n", err);
-            free(dir_path);
-            free(data);
-            return err;
-        }
-    }
-    free(dir_path);
-
-    // Write file
-    if ((err = write_file(target_path, data, size)) != 0) {
-        printf("ERROR: write_file: %d\n", err);
-        free(data);
-        return err;
-    }
-    free(data);
-
-    return 0;
-}
-
-// Extract a tree object recursively to the filesystem
-static int extract_tree_recursive(const char *tree_sha1, const char *base_path) {
-    int err;
-    tree_entry *entries = NULL;
-
-    if ((err = tree_parse(tree_sha1, &entries)) != 0) {
-        printf("ERROR: tree_parse: %d\n", err);
-        return err;
-    }
-
-    tree_entry *current = entries;
-    while (current) {
-        char full_path[MAX_PATH];
-        if (strlen(base_path) > 0) {
-            if (strlen(base_path) + 1 + strlen(current->name) < MAX_PATH) {
-                strcpy(full_path, base_path);
-                strcat(full_path, "/");
-                strcat(full_path, current->name);
-            } else {
-                printf("ERROR: Path too long\n");
-                tree_free(entries);
-                return -1;
-            }
-        } else {
-            strcpy(full_path, current->name);
-        }
-
-        if (strcmp(current->type, "blob") == 0) {
-            // Extract file
-            if ((err = extract_blob(current->sha1, full_path)) != 0) {
-                printf("ERROR: extract_blob: %d\n", err);
-                tree_free(entries);
-                return err;
-            }
-        } else if (strcmp(current->type, "tree") == 0) {
-            // Create directory and recurse
-            if ((err = mkdir_p(full_path)) != 0) {
-                printf("ERROR: mkdir_p: %d\n", err);
-                tree_free(entries);
-                return err;
-            }
-            if ((err = extract_tree_recursive(current->sha1, full_path)) != 0) {
-                tree_free(entries);
-                return err;
-            }
-        }
-
-        current = current->next;
-    }
-
-    tree_free(entries);
-    return 0;
-}
-
-// Collect all files in working directory
-static int collect_working_files(const char *dir_path, file_entry **files) {
-    DIR *dir = opendir(dir_path);
-    if (!dir) {
-        return -1;
-    }
-
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        // Skip . and .. and .gitnano
-        if (strcmp(entry->d_name, ".") == 0 ||
-            strcmp(entry->d_name, "..") == 0 ||
-            strcmp(entry->d_name, ".gitnano") == 0) {
-            continue;
-        }
-
-        char full_path[MAX_PATH];
-        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
-
-        struct stat st;
-        if (stat(full_path, &st) != 0) {
-            continue;
-        }
-
-        if (S_ISDIR(st.st_mode)) {
-            // Recursively collect from subdirectory
-            collect_working_files(full_path, files);
-        } else {
-            // Add file to list
-            file_entry *file = safe_malloc(sizeof(file_entry));
-            if (!file) {
-                closedir(dir);
-                return -1;
-            }
-
-            // Store relative path from the root
-            const char *base = (strcmp(dir_path, ".") == 0) ? "" : dir_path + 2;
-            if (strlen(base) > 0) {
-                snprintf(file->path, sizeof(file->path), "%s/%s", base, entry->d_name);
-            } else {
-                strcpy(file->path, entry->d_name);
-            }
-
-            file->next = *files;
-            *files = file;
-        }
-    }
-
-    closedir(dir);
-    return 0;
-}
-
-// Check if file exists in target tree files
-static int file_in_target_tree(const char *path, file_entry *target_files) {
-    while (target_files) {
-        if (strcmp(target_files->path, path) == 0) {
-            return 1;
-        }
-        target_files = target_files->next;
-    }
-    return 0;
-}
-
-// Free file list
-static void free_file_list(file_entry *list) {
-    while (list) {
-        file_entry *next = list->next;
-        free(list);
-        list = next;
-    }
-}
-
-// Cleanup files that are not in target tree
-static int cleanup_extra_files(const char *base_path, file_entry *target_files) {
-    file_entry *working_files = NULL;
-
-    if (collect_working_files(".", &working_files) != 0) {
-        free_file_list(working_files);
-        return -1;
-    }
-
-    file_entry *current = working_files;
-    while (current) {
-        if (!file_in_target_tree(current->path, target_files)) {
-            char full_path[MAX_PATH];
-            snprintf(full_path, sizeof(full_path), "%s/%s", base_path, current->path);
-
-            if (unlink(full_path) != 0) {
-                printf("Warning: Could not delete file %s\n", full_path);
-            }
-        }
-        current = current->next;
-    }
-
-    free_file_list(working_files);
-    return 0;
-}
-
-// Collect target tree files for comparison
-static int collect_target_files(const char *tree_sha1, const char *base_path, file_entry **files) {
-    tree_entry *entries = NULL;
-    if (tree_parse(tree_sha1, &entries) != 0) {
-        return -1;
-    }
-
-    tree_entry *current = entries;
-    while (current) {
-        file_entry *file = safe_malloc(sizeof(file_entry));
-        if (!file) {
-            tree_free(entries);
-            return -1;
-        }
-
-        if (strlen(base_path) > 0) {
-            snprintf(file->path, sizeof(file->path), "%s/%s", base_path, current->name);
-        } else {
-            strcpy(file->path, current->name);
-        }
-
-        if (strcmp(current->type, "tree") == 0) {
-            // Recursively collect from subtree
-            collect_target_files(current->sha1, file->path, files);
-            free(file);
-        } else {
-            file->next = *files;
-            *files = file;
-        }
-
-        current = current->next;
-    }
-
-    tree_free(entries);
-    return 0;
-}
 
 // Find file entry by path in tree
 static tree_entry *find_entry_by_path(tree_entry *entries, const char *path) {
@@ -635,18 +394,6 @@ int tree_restore_path(const char *tree_sha1, const char *tree_path, const char *
     }
 
     tree_free(entries);
-    return 0;
-}
-
-// Add file to checkout stats
-static int add_file_to_stats(char ***files, int *count, const char *path) {
-    *files = safe_realloc(*files, (*count + 1) * sizeof(char*));
-    if (!*files) return -1;
-
-    (*files)[*count] = safe_strdup(path);
-    if (!(*files)[*count]) return -1;
-
-    (*count)++;
     return 0;
 }
 

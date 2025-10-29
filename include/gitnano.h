@@ -8,6 +8,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdarg.h>
 
 // Object types
 #define OBJ_BLOB  1
@@ -15,8 +16,8 @@
 #define OBJ_COMMIT 3
 
 // Max path length
-#define MAX_PATH 4096
-#define SHA1_HEX_SIZE 41
+#define MAX_PATH 8192
+#define SHA1_HEX_SIZE 65
 
 // GitNano directory structure
 #define GITNANO_DIR ".gitnano"
@@ -67,6 +68,13 @@ typedef struct {
     char timestamp[32];
     char tree_hash[SHA1_HEX_SIZE];
 } gitnano_snapshot_info;
+
+// File entry structure for diff operations
+typedef struct file_entry {
+    char *path;
+    char sha1[SHA1_HEX_SIZE];
+    struct file_entry *next;
+} file_entry;
 
 // Diff result structure
 typedef struct {
@@ -124,12 +132,11 @@ int blob_write(const char *data, size_t size, char *sha1_out);
 int blob_read(const char *sha1, char **data, size_t *size);
 int blob_create_from_file(const char *filepath, char *sha1_out);
 int blob_exists(const char *sha1);
-int blob_size(const char *sha1, size_t *size_out);
-int blob_cat(const char *sha1, FILE *out);
 
 // Tree functions
 tree_entry *tree_entry_new(const char *mode, const char *type,
                            const char *sha1, const char *name);
+void tree_entry_add(tree_entry **entries, tree_entry *new_entry);
 int tree_build(const char *path, char *sha1_out);
 int tree_parse(const char *sha1, tree_entry **entries);
 int tree_write(tree_entry *entries, char *sha1_out);
@@ -162,13 +169,21 @@ char *read_file(const char *path, size_t *size);
 int write_file(const char *path, const void *data, size_t size);
 void get_git_timestamp(char *timestamp, size_t size);
 void get_object_path(const char *sha1, char *path);
-int check_git_nano_conflict(void);
-int is_gitnano_path(const char *path);
 
 // Safe memory allocation helper functions
 void *safe_malloc(size_t size);
 void *safe_realloc(void *ptr, size_t size);
 char *safe_strdup(const char *s);
+char *safe_asprintf(const char *fmt, ...);
+
+// File system operations (moved from tree.c)
+int extract_blob(const char *sha1, const char *target_path);
+int extract_tree_recursive(const char *tree_sha1, const char *base_path);
+int collect_working_files(const char *dir_path, file_entry **files);
+int file_in_target_tree(const char *path, file_entry *target_files);
+void free_file_list(file_entry *list);
+int cleanup_extra_files(const char *base_path, file_entry *target_files);
+int collect_target_files(const char *tree_sha1, const char *base_path, file_entry **files);
 
 // Workspace management functions
 int get_workspace_name(char *workspace_name, size_t size);
@@ -180,10 +195,6 @@ int workspace_exists();
 int workspace_is_initialized();
 int workspace_sync_single_file(const char *path);
 int workspace_sync_from_single_file(const char *path);
-// Legacy sync functions (will be deprecated)
-int workspace_sync_to(const char *path);
-int workspace_sync_from(const char *path);
-int workspace_copy_directory(const char *src, const char *dst, const char *exclude_dir);
 int workspace_file_exists(const char *path);
 char *workspace_read_file(const char *path, size_t *size);
 int workspace_write_file(const char *path, const void *data, size_t size);

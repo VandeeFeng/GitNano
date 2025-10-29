@@ -1,18 +1,11 @@
 #define _GNU_SOURCE
 #include "gitnano.h"
 
-// Helper structure for file comparison
-typedef struct file_entry {
-    char path[MAX_PATH];
-    char sha1[SHA1_HEX_SIZE];
-    struct file_entry *next;
-} file_entry;
 
 // Helper functions for diff functionality
 static int collect_tree_files(const char *tree_sha1, file_entry **files_out);
 static int add_file_to_list(file_entry **list, const char *path, const char *sha1);
 static file_entry *find_file(file_entry *list, const char *path);
-static void free_file_list(file_entry *list);
 static int compare_trees(const char *tree1_sha1, const char *tree2_sha1, gitnano_diff_result *diff);
 
 // High-level API for other applications
@@ -191,8 +184,11 @@ static int add_file_to_list(file_entry **list, const char *path, const char *sha
     file_entry *entry = safe_malloc(sizeof(file_entry));
     if (!entry) return -1;
 
-    strncpy(entry->path, path, sizeof(entry->path) - 1);
-    entry->path[sizeof(entry->path) - 1] = '\0';
+    entry->path = safe_strdup(path);
+    if (!entry->path) {
+        free(entry);
+        return -1;
+    }
     strncpy(entry->sha1, sha1, sizeof(entry->sha1) - 1);
     entry->sha1[sizeof(entry->sha1) - 1] = '\0';
     entry->next = *list;
@@ -212,14 +208,6 @@ static file_entry *find_file(file_entry *list, const char *path) {
     return NULL;
 }
 
-// Free file list
-static void free_file_list(file_entry *list) {
-    while (list) {
-        file_entry *next = list->next;
-        free(list);
-        list = next;
-    }
-}
 
 // Recursively collect all files from a tree
 static int collect_tree_files(const char *tree_sha1, file_entry **files_out) {

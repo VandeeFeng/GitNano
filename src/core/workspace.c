@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include "workspace.h"
+#include "../../include/workspace.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <pwd.h>
@@ -140,74 +140,13 @@ int workspace_is_initialized() {
         return 0;
     }
 
-    char gitnano_dir[MAX_PATH];
-    snprintf(gitnano_dir, sizeof(gitnano_dir), "%s/.gitnano", workspace_path);
+    char *gitnano_dir = safe_asprintf("%s/.gitnano", workspace_path);
 
-    return file_exists(gitnano_dir);
+    int result = file_exists(gitnano_dir);
+    free(gitnano_dir);
+    return result;
 }
 
-// Copy directory recursively, excluding specified directory
-int workspace_copy_directory(const char *src, const char *dst, const char *exclude_dir) {
-    DIR *dir = opendir(src);
-    if (!dir) {
-        printf("ERROR: Cannot open source directory: %s\n", src);
-        return -1;
-    }
-
-    // Create destination directory
-    if (mkdir_p(dst) != 0) {
-        printf("ERROR: Cannot create destination directory: %s\n", dst);
-        closedir(dir);
-        return -1;
-    }
-
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        // Skip . and .. and exclude directory
-        if (strcmp(entry->d_name, ".") == 0 ||
-            strcmp(entry->d_name, "..") == 0 ||
-            (exclude_dir && strcmp(entry->d_name, exclude_dir) == 0)) {
-            continue;
-        }
-
-        char src_path[MAX_PATH];
-        char dst_path[MAX_PATH];
-        snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
-        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
-
-        struct stat st;
-        if (stat(src_path, &st) != 0) {
-            printf("WARNING: Cannot stat %s, skipping\n", src_path);
-            continue;
-        }
-
-        if (S_ISDIR(st.st_mode)) {
-            // Recursively copy subdirectory
-            if (workspace_copy_directory(src_path, dst_path, exclude_dir) != 0) {
-                closedir(dir);
-                return -1;
-            }
-        } else {
-            // Copy file
-            size_t size;
-            char *data = read_file(src_path, &size);
-            if (!data) {
-                printf("WARNING: Cannot read file %s, skipping\n", src_path);
-                continue;
-            }
-
-            if (write_file(dst_path, data, size) != 0) {
-                printf("WARNING: Cannot write file %s, skipping\n", dst_path);
-                free(data);
-                continue;
-            }
-            free(data);
-        }
-    }
-
-    closedir(dir);
-    return 0;
-}
 
 // Initialize workspace - create directory structure only (lazy file population)
 int workspace_init() {
@@ -233,8 +172,7 @@ int workspace_init() {
     // Files will be copied to workspace only when they are explicitly added
 
     // Initialize .gitnano directory in workspace
-    char gitnano_dir[MAX_PATH];
-    snprintf(gitnano_dir, sizeof(gitnano_dir), "%s/.gitnano", workspace_path);
+    char *gitnano_dir = safe_asprintf("%s/.gitnano", workspace_path);
 
     if (mkdir_p(gitnano_dir) != 0) {
         printf("ERROR: Failed to create .gitnano directory\n");
@@ -242,10 +180,9 @@ int workspace_init() {
     }
 
     // Create .gitnano subdirectories
-    char objects_dir[MAX_PATH];
-    char refs_dir[MAX_PATH];
-    snprintf(objects_dir, sizeof(objects_dir), "%s/objects", gitnano_dir);
-    snprintf(refs_dir, sizeof(refs_dir), "%s/refs", gitnano_dir);
+    char *objects_dir = safe_asprintf("%s/objects", gitnano_dir);
+
+    char *refs_dir = safe_asprintf("%s/refs", gitnano_dir);
 
     if (mkdir_p(objects_dir) != 0 || mkdir_p(refs_dir) != 0) {
         printf("ERROR: Failed to create .gitnano subdirectories\n");
@@ -253,8 +190,7 @@ int workspace_init() {
     }
 
     // Create initial HEAD file
-    char head_file[MAX_PATH];
-    snprintf(head_file, sizeof(head_file), "%s/HEAD", gitnano_dir);
+    char *head_file = safe_asprintf("%s/HEAD", gitnano_dir);
     const char *head_content = "ref: refs/heads/master\n";
     if (write_file(head_file, head_content, strlen(head_content)) != 0) {
         printf("ERROR: Failed to create HEAD file\n");
@@ -262,12 +198,22 @@ int workspace_init() {
     }
 
     // Create refs/heads directory
-    char heads_dir[MAX_PATH];
-    snprintf(heads_dir, sizeof(heads_dir), "%s/refs/heads", gitnano_dir);
+    char *heads_dir = safe_asprintf("%s/refs/heads", gitnano_dir);
     if (mkdir_p(heads_dir) != 0) {
         printf("ERROR: Failed to create refs/heads directory\n");
+        free(gitnano_dir);
+        free(objects_dir);
+        free(refs_dir);
+        free(head_file);
+        free(heads_dir);
         return -1;
     }
+
+    free(gitnano_dir);
+    free(objects_dir);
+    free(refs_dir);
+    free(head_file);
+    free(heads_dir);
 
     printf("Workspace initialized successfully with .gitnano structure\n");
     return 0;
@@ -291,13 +237,14 @@ int workspace_sync_single_file(const char *path) {
         return -1;
     }
 
-    char src_path[MAX_PATH];
-    char dst_path[MAX_PATH];
-    snprintf(src_path, sizeof(src_path), "%s/%s", cwd, path);
-    snprintf(dst_path, sizeof(dst_path), "%s/%s", workspace_path, path);
+    char *src_path = safe_asprintf("%s/%s", cwd, path);
+
+    char *dst_path = safe_asprintf("%s/%s", workspace_path, path);
 
     if (!file_exists(src_path)) {
         printf("ERROR: Source file does not exist: %s\n", src_path);
+        free(src_path);
+        free(dst_path);
         return -1;
     }
 
@@ -317,6 +264,8 @@ int workspace_sync_single_file(const char *path) {
     char *data = read_file(src_path, &size);
     if (!data) {
         printf("ERROR: Failed to read source file: %s\n", src_path);
+        free(src_path);
+        free(dst_path);
         return -1;
     }
 
@@ -328,6 +277,9 @@ int workspace_sync_single_file(const char *path) {
     } else {
         printf("ERROR: Failed to sync file to workspace: %s\n", path);
     }
+
+    free(src_path);
+    free(dst_path);
 
     return result;
 }
@@ -350,13 +302,14 @@ int workspace_sync_from_single_file(const char *path) {
         return -1;
     }
 
-    char src_path[MAX_PATH];
-    char dst_path[MAX_PATH];
-    snprintf(src_path, sizeof(src_path), "%s/%s", workspace_path, path);
-    snprintf(dst_path, sizeof(dst_path), "%s/%s", cwd, path);
+    char *src_path = safe_asprintf("%s/%s", workspace_path, path);
+
+    char *dst_path = safe_asprintf("%s/%s", cwd, path);
 
     if (!file_exists(src_path)) {
         printf("ERROR: Workspace file does not exist: %s\n", src_path);
+        free(src_path);
+        free(dst_path);
         return -1;
     }
 
@@ -376,6 +329,8 @@ int workspace_sync_from_single_file(const char *path) {
     char *data = read_file(src_path, &size);
     if (!data) {
         printf("ERROR: Failed to read workspace file: %s\n", src_path);
+        free(src_path);
+        free(dst_path);
         return -1;
     }
 
@@ -388,134 +343,13 @@ int workspace_sync_from_single_file(const char *path) {
         printf("ERROR: Failed to sync file from workspace: %s\n", path);
     }
 
+    free(src_path);
+    free(dst_path);
+
     return result;
 }
 
-// Sync files to workspace (legacy function - will be removed)
-int workspace_sync_to(const char *path) {
-    if (!workspace_exists()) {
-        printf("ERROR: Workspace does not exist. Run 'gitnano init' first.\n");
-        return -1;
-    }
 
-    char workspace_path[MAX_PATH];
-    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
-        return -1;
-    }
-
-    char cwd[MAX_PATH];
-    if (!getcwd(cwd, sizeof(cwd))) {
-        printf("ERROR: getcwd failed\n");
-        return -1;
-    }
-
-    if (path && strlen(path) > 0) {
-        // Sync specific file/directory
-        char src_path[MAX_PATH];
-        char dst_path[MAX_PATH];
-        snprintf(src_path, sizeof(src_path), "%s/%s", cwd, path);
-        get_workspace_file_path(path, dst_path, sizeof(dst_path));
-
-        if (file_exists(src_path)) {
-            struct stat st;
-            if (stat(src_path, &st) == 0) {
-                if (S_ISDIR(st.st_mode)) {
-                    return workspace_copy_directory(src_path, dst_path, NULL);
-                } else {
-                    size_t size;
-                    char *data = read_file(src_path, &size);
-                    if (!data) return -1;
-
-                    // Create directory if needed
-                    char *dir_path = safe_strdup(dst_path);
-                    if (dir_path) {
-                        char *last_slash = strrchr(dir_path, '/');
-                        if (last_slash) {
-                            *last_slash = '\0';
-                            mkdir_p(dir_path);
-                        }
-                        free(dir_path);
-                    }
-
-                    int result = write_file(dst_path, data, size);
-                    free(data);
-                    return result;
-                }
-            }
-        } else {
-            printf("ERROR: Source path does not exist: %s\n", src_path);
-            return -1;
-        }
-    } else {
-        // Sync entire directory
-        return workspace_copy_directory(cwd, workspace_path, ".git");
-    }
-
-    return 0;
-}
-
-// Sync files from workspace
-int workspace_sync_from(const char *path) {
-    if (!workspace_exists()) {
-        printf("ERROR: Workspace does not exist\n");
-        return -1;
-    }
-
-    char workspace_path[MAX_PATH];
-    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
-        return -1;
-    }
-
-    char cwd[MAX_PATH];
-    if (!getcwd(cwd, sizeof(cwd))) {
-        printf("ERROR: getcwd failed\n");
-        return -1;
-    }
-
-    if (path && strlen(path) > 0) {
-        // Sync specific file/directory from workspace
-        char src_path[MAX_PATH];
-        char dst_path[MAX_PATH];
-        get_workspace_file_path(path, src_path, sizeof(src_path));
-        snprintf(dst_path, sizeof(dst_path), "%s/%s", cwd, path);
-
-        if (workspace_file_exists(path)) {
-            struct stat st;
-            if (stat(src_path, &st) == 0) {
-                if (S_ISDIR(st.st_mode)) {
-                    return workspace_copy_directory(src_path, cwd, NULL);
-                } else {
-                    size_t size;
-                    char *data = workspace_read_file(path, &size);
-                    if (!data) return -1;
-
-                    // Create directory if needed
-                    char *dir_path = safe_strdup(dst_path);
-                    if (dir_path) {
-                        char *last_slash = strrchr(dir_path, '/');
-                        if (last_slash) {
-                            *last_slash = '\0';
-                            mkdir_p(dir_path);
-                        }
-                        free(dir_path);
-                    }
-
-                    int result = write_file(dst_path, data, size);
-                    free(data);
-                    return result;
-                }
-            }
-        } else {
-            printf("ERROR: Workspace path does not exist: %s\n", path);
-            return -1;
-        }
-    } else {
-        // Sync entire workspace back to original directory
-        return workspace_copy_directory(workspace_path, cwd, ".gitnano");
-    }
-
-    return 0;
-}
 
 // Check if file exists in workspace
 int workspace_file_exists(const char *path) {

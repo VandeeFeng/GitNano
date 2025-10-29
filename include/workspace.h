@@ -20,10 +20,6 @@ int workspace_is_initialized();
 int workspace_sync_single_file(const char *path);
 int workspace_sync_from_single_file(const char *path);
 
-// Legacy sync functions (will be deprecated)
-int workspace_sync_to(const char *path);
-int workspace_sync_from(const char *path);
-int workspace_copy_directory(const char *src, const char *dst, const char *exclude_dir);
 
 // File operations in workspace
 int workspace_file_exists(const char *path);

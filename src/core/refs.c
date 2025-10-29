@@ -15,11 +15,13 @@ static int find_object_by_partial_sha1(const char *partial_sha1, char *full_sha1
     while ((entry = readdir(dir)) != NULL) {
         if (strlen(entry->d_name) != 2) continue;
 
-        char subdir[MAX_PATH];
-        snprintf(subdir, sizeof(subdir), "%s/%s", objects_dir, entry->d_name);
+        char *subdir = safe_asprintf("%s/%s", objects_dir, entry->d_name);
 
         DIR *subdir_ptr = opendir(subdir);
-        if (!subdir_ptr) continue;
+        if (!subdir_ptr) {
+            free(subdir);
+            continue;
+        }
 
         struct dirent *obj_entry;
         while ((obj_entry = readdir(subdir_ptr)) != NULL) {
@@ -27,20 +29,23 @@ static int find_object_by_partial_sha1(const char *partial_sha1, char *full_sha1
             if (strcmp(obj_entry->d_name, ".") == 0 || strcmp(obj_entry->d_name, "..") == 0) continue;
 
             // Construct full SHA1
-            char candidate_sha1[SHA1_HEX_SIZE];
-            snprintf(candidate_sha1, SHA1_HEX_SIZE, "%s%s", entry->d_name, obj_entry->d_name);
+            char *candidate_sha1 = safe_asprintf("%s%s", entry->d_name, obj_entry->d_name);
 
             // Check if candidate SHA1 starts with partial_sha1 (proper prefix matching)
             if (strncmp(candidate_sha1, partial_sha1, strlen(partial_sha1)) == 0) {
                 // Verify this is a valid commit object
                 if (commit_exists(candidate_sha1)) {
                     strcpy(full_sha1, candidate_sha1);
+                    free(candidate_sha1);
+                    free(subdir);
                     closedir(subdir_ptr);
                     closedir(dir);
                     return 0;
                 }
             }
+            free(candidate_sha1);
         }
+        free(subdir);
         closedir(subdir_ptr);
     }
 
@@ -111,11 +116,9 @@ int resolve_reference(const char *reference, char *sha1_out) {
 
     // Check if it's a branch name
     if (strncmp(reference, "refs/heads/", 11) != 0) {
-        char branch_ref[MAX_PATH];
-        snprintf(branch_ref, sizeof(branch_ref), "refs/heads/%s", reference);
+        char *branch_ref = safe_asprintf("refs/heads/%s", reference);
 
-        char full_path[MAX_PATH];
-        snprintf(full_path, sizeof(full_path), "%s/%s", GITNANO_DIR, branch_ref);
+        char *full_path = safe_asprintf("%s/%s", GITNANO_DIR, branch_ref);
 
         if (file_exists(full_path)) {
             size_t size;
@@ -127,20 +130,27 @@ int resolve_reference(const char *reference, char *sha1_out) {
                 if (strlen(content) == SHA1_HEX_SIZE - 1 && commit_exists(content)) {
                     strcpy(sha1_out, content);
                     free(content);
+                    free(branch_ref);
+                    free(full_path);
                     return 0;
                 }
                 fprintf(stderr, "ERROR: resolve_reference: invalid commit SHA1 in branch %s: %s\n", reference, content);
                 free(content);
+                free(branch_ref);
+                free(full_path);
                 return -1;
             } else {
                 fprintf(stderr, "ERROR: resolve_reference: failed to read branch file %s\n", full_path);
+                free(branch_ref);
+                free(full_path);
                 return -1;
             }
         }
+        free(branch_ref);
+        free(full_path);
     } else {
         // Full reference path provided
-        char full_path[MAX_PATH];
-        snprintf(full_path, sizeof(full_path), "%s/%s", GITNANO_DIR, reference);
+        char *full_path = safe_asprintf("%s/%s", GITNANO_DIR, reference);
 
         if (file_exists(full_path)) {
             size_t size;
@@ -152,17 +162,21 @@ int resolve_reference(const char *reference, char *sha1_out) {
                 if (strlen(content) == SHA1_HEX_SIZE - 1 && commit_exists(content)) {
                     strcpy(sha1_out, content);
                     free(content);
+                    free(full_path);
                     return 0;
                 }
                 fprintf(stderr, "ERROR: resolve_reference: invalid commit SHA1 in reference %s: %s\n", reference, content);
                 free(content);
+                free(full_path);
                 return -1;
             } else {
                 fprintf(stderr, "ERROR: resolve_reference: failed to read reference file %s\n", full_path);
+                free(full_path);
                 return -1;
             }
         } else {
             fprintf(stderr, "ERROR: resolve_reference: reference %s not found\n", reference);
+            free(full_path);
             return -1;
         }
     }

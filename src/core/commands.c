@@ -6,13 +6,14 @@ static int check_repo_exists() {
         return -1;
     }
 
-    char gitnano_dir[MAX_PATH];
-    snprintf(gitnano_dir, sizeof(gitnano_dir), "%s/.gitnano", workspace_path);
+    char *gitnano_dir = safe_asprintf("%s/.gitnano", workspace_path);
 
     if (!file_exists(gitnano_dir)) {
+        free(gitnano_dir);
         printf("Not a GitNano repository (workspace not initialized)\n");
         return -1;
     }
+    free(gitnano_dir);
     return 0;
 }
 
@@ -309,12 +310,8 @@ int gitnano_checkout(const char *reference, const char *path) {
         // Change back to original directory
         chdir(original_cwd);
 
-        // For full checkout, we need to sync all files from workspace to original directory
-        // This is a simplified approach - in practice, we might want to track what changed
-        printf("Syncing all files from workspace to original directory...\n");
-        if (workspace_sync_from(NULL) != 0) {
-            printf("WARNING: Failed to sync all files to original directory\n");
-        }
+        // For full checkout, files have already been restored and synced individually
+        // No need for additional sync operations
 
         printf("Checked out %s\n", reference);
     }

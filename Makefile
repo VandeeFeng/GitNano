@@ -8,7 +8,16 @@ BUILDDIR = build
 
 # Source files
 LIB_SOURCES = $(filter-out $(SRCDIR)/main.c,$(wildcard $(SRCDIR)/*.c))
-LIB_OBJECTS = $(LIB_SOURCES:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
+LIB_SOURCES += $(wildcard $(SRCDIR)/core/*.c)
+LIB_SOURCES += $(wildcard $(SRCDIR)/objects/*.c)
+LIB_SOURCES += $(wildcard $(SRCDIR)/utils/*.c)
+
+# Convert source paths to object paths
+SRC_OBJECTS = $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(filter-out $(SRCDIR)/utils/%.c,$(filter-out $(SRCDIR)/core/%.c,$(filter-out $(SRCDIR)/objects/%.c,$(LIB_SOURCES)))))
+CORE_OBJECTS = $(patsubst $(SRCDIR)/core/%.c,$(BUILDDIR)/core/%.o,$(filter $(SRCDIR)/core/%.c,$(LIB_SOURCES)))
+OBJECTS_OBJECTS = $(patsubst $(SRCDIR)/objects/%.c,$(BUILDDIR)/objects/%.o,$(filter $(SRCDIR)/objects/%.c,$(LIB_SOURCES)))
+UTILS_OBJECTS = $(patsubst $(SRCDIR)/utils/%.c,$(BUILDDIR)/utils/%.o,$(filter $(SRCDIR)/utils/%.c,$(LIB_SOURCES)))
+LIB_OBJECTS = $(SRC_OBJECTS) $(CORE_OBJECTS) $(OBJECTS_OBJECTS) $(UTILS_OBJECTS)
 MAIN_OBJECT = $(BUILDDIR)/main.o
 
 # Target executable
@@ -22,9 +31,21 @@ all: $(TARGET)
 
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
+	mkdir -p $(BUILDDIR)/core
+	mkdir -p $(BUILDDIR)/objects
+	mkdir -p $(BUILDDIR)/utils
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
+
+$(BUILDDIR)/core/%.o: $(SRCDIR)/core/%.c | $(BUILDDIR)
+	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
+
+$(BUILDDIR)/objects/%.o: $(SRCDIR)/objects/%.c | $(BUILDDIR)
+	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
+
+$(BUILDDIR)/utils/%.o: $(SRCDIR)/utils/%.c | $(BUILDDIR)
+	$(CC) $(CFLAGS) -Iinclude -I$(SRCDIR)/utils -c $< -o $@
 
 # Build static library
 $(STATIC_LIB): $(LIB_OBJECTS)
@@ -61,4 +82,4 @@ static-lib: $(STATIC_LIB)
 # Header only installation
 install-headers:
 	mkdir -p /usr/local/include/gitnano
-	cp $(SRCDIR)/*.h /usr/local/include/gitnano/
+	cp include/*.h /usr/local/include/gitnano/
