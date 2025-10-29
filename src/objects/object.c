@@ -43,7 +43,7 @@ int object_hash(const char *type, const void *data, size_t size, char *sha1_out)
 }
 
 // Simple object integrity check (only basic verification)
-static int verify_object_integrity(const char *sha1, const char *expected_type, const void *expected_data, size_t expected_size) {
+static int verify_object_integrity(const char *sha1, const char *expected_type, size_t expected_size) {
     gitnano_object obj;
     int err = object_read(sha1, &obj);
     if (err != 0) {
@@ -114,7 +114,7 @@ int object_write(const char *type, const void *data, size_t size, char *sha1_out
     }
 
     // Quick integrity check (only if verification fails, remove object)
-    if (verify_object_integrity(sha1, type, data, size) != 0) {
+    if (verify_object_integrity(sha1, type, size) != 0) {
         // Remove corrupted object file
         unlink(path);
         free(header);
