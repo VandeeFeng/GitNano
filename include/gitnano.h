@@ -17,7 +17,7 @@
 
 // Max path length
 #define MAX_PATH 8192
-#define SHA1_HEX_SIZE 65
+#define SHA1_HEX_SIZE 41
 
 // GitNano directory structure
 #define GITNANO_DIR ".gitnano"
