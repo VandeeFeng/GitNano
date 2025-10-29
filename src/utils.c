@@ -97,18 +97,39 @@ int sha1_data(const void *data, size_t size, char *sha1_out) {
 // Compress data using zlib
 int compress_data(const void *input, size_t input_size,
                   void **output, size_t *output_size) {
+    if (!input || !output || !output_size) {
+        fprintf(stderr, "ERROR: compress_data: invalid arguments\n");
+        return -1;
+    }
+
+    if (input_size == 0) {
+        *output = NULL;
+        *output_size = 0;
+        return 0;
+    }
+
     uLongf compressed_size = compressBound(input_size);
-    *output = malloc(compressed_size);
+    *output = safe_malloc(compressed_size);
     if (!*output) {
-        printf("ERROR: malloc: %d\n", -1);
+        fprintf(stderr, "ERROR: compress_data: failed to allocate compression buffer\n");
         return -1;
     }
 
     int result = compress2(*output, &compressed_size, input, input_size, 9);
     if (result != Z_OK) {
-        printf("ERROR: compress2: %d\n", result);
+        fprintf(stderr, "ERROR: compress_data: compression failed with code %d\n", result);
         free(*output);
+        *output = NULL;
         return -1;
+    }
+
+    // Shrink buffer to actual compressed size if needed
+    if (compressed_size < compressBound(input_size)) {
+        void *shrunk_output = safe_realloc(*output, compressed_size);
+        if (shrunk_output) {
+            *output = shrunk_output;
+        }
+        // If realloc fails, keep the original buffer - not a critical error
     }
 
     *output_size = compressed_size;
@@ -118,40 +139,96 @@ int compress_data(const void *input, size_t input_size,
 // Decompress data using zlib
 int decompress_data(const void *input, size_t input_size,
                     void **output, size_t *output_size) {
-    // Start with a reasonable estimate
-    uLongf decompressed_size = input_size * 4;
-    *output = malloc(decompressed_size);
-    if (!*output) {
-        printf("ERROR: malloc: %d\n", -1);
+    if (!input || !output || !output_size) {
+        fprintf(stderr, "ERROR: decompress_data: invalid arguments\n");
         return -1;
     }
 
-    int result;
-    while (1) {
-        result = uncompress(*output, &decompressed_size, input, input_size);
+    if (input_size == 0) {
+        *output = NULL;
+        *output_size = 0;
+        return 0;
+    }
+
+    // Check for obviously corrupted input
+    if (input_size < 8) {  // Minimum valid zlib stream size
+        fprintf(stderr, "ERROR: decompress_data: input too small to be valid compressed data (%zu bytes)\n", input_size);
+        return -1;
+    }
+
+    // Start with a reasonable buffer size - compressed data can expand significantly
+    uLongf buffer_size = input_size * 4;
+    if (buffer_size < 1024) buffer_size = 1024;  // Minimum buffer size
+    if (buffer_size > 50 * 1024 * 1024) buffer_size = 50 * 1024 * 1024;  // Cap at 50MB
+
+    *output = safe_malloc(buffer_size);
+    if (!*output) {
+        fprintf(stderr, "ERROR: decompress_data: failed to allocate initial buffer (%zu bytes)\n", buffer_size);
+        return -1;
+    }
+
+    int attempts = 0;
+    const int max_attempts = 10;  // Prevent infinite loops
+
+    while (attempts < max_attempts) {
+        uLongf dest_len = buffer_size;
+        int result = uncompress(*output, &dest_len, input, input_size);
 
         if (result == Z_OK) {
-            *output_size = decompressed_size;
+            *output_size = dest_len;
+            // Shrink buffer to actual size if it's significantly larger
+            if (*output_size < buffer_size && *output_size > 0) {
+                void *shrunk_output = safe_realloc(*output, *output_size);
+                if (shrunk_output) {
+                    *output = shrunk_output;
+                }
+                // If realloc fails, keep the original buffer - not critical
+            }
             return 0;
         }
 
         if (result == Z_BUF_ERROR) {
-            // Need more space
-            free(*output);
-            decompressed_size *= 2;
-            *output = malloc(decompressed_size);
-            if (!*output) {
-                printf("ERROR: malloc: %d\n", -1);
+            attempts++;
+            buffer_size *= 2;
+            // Prevent unreasonable buffer growth
+            if (buffer_size > 100 * 1024 * 1024) {  // 100MB limit
+                fprintf(stderr, "ERROR: decompress_data: decompression buffer too large (%zu bytes), data may be corrupted\n", buffer_size);
+                free(*output);
+                *output = NULL;
                 return -1;
             }
-            continue;
-        }
 
-        // Other error
-        printf("ERROR: uncompress: %d\n", result);
-        free(*output);
-        return -1;
+            void *new_output = safe_realloc(*output, buffer_size);
+            if (!new_output) {
+                fprintf(stderr, "ERROR: decompress_data: failed to reallocate buffer to %zu bytes\n", buffer_size);
+                free(*output);
+                *output = NULL;
+                return -1;
+            }
+            *output = new_output;
+        } else {
+            fprintf(stderr, "ERROR: decompress_data: uncompress failed with code %d", result);
+            switch (result) {
+                case Z_MEM_ERROR:
+                    fprintf(stderr, " (memory error)\n");
+                    break;
+                case Z_DATA_ERROR:
+                    fprintf(stderr, " (data corrupted or incomplete)\n");
+                    break;
+                default:
+                    fprintf(stderr, " (unknown error)\n");
+                    break;
+            }
+            free(*output);
+            *output = NULL;
+            return -1;
+        }
     }
+
+    fprintf(stderr, "ERROR: decompress_data: maximum expansion attempts exceeded, data may be corrupted\n");
+    free(*output);
+    *output = NULL;
+    return -1;
 }
 
 // Create directory recursively (like mkdir -p)
@@ -222,7 +299,7 @@ char *read_file(const char *path, size_t *size) {
 int write_file(const char *path, const void *data, size_t size) {
     FILE *fp = fopen(path, "wb");
     if (!fp) {
-        printf("ERROR: fopen: %d\n", -1);
+        fprintf(stderr, "ERROR: fopen failed for path '%s': %s\n", path, strerror(errno));
         return -1;
     }
 
@@ -230,7 +307,8 @@ int write_file(const char *path, const void *data, size_t size) {
     fclose(fp);
 
     if (bytes_written != size) {
-        printf("ERROR: fwrite incomplete\n");
+        fprintf(stderr, "ERROR: fwrite incomplete for path '%s'. Wrote %zu of %zu bytes.\n",
+                path, bytes_written, size);
         return -1;
     }
 
@@ -247,4 +325,56 @@ void get_git_timestamp(char *timestamp, size_t size) {
 // Create object path from SHA-1
 void get_object_path(const char *sha1, char *path) {
     snprintf(path, MAX_PATH, "%s/%.2s/%s", OBJECTS_DIR, sha1, sha1 + 2);
+}
+
+// Check if there's a potential Git/GitNano path conflict
+int check_git_nano_conflict(void) {
+    if (file_exists(".git") && file_exists(".gitnano")) {
+        fprintf(stderr, "WARNING: Both .git and .gitnano repositories detected in this directory.\n");
+        fprintf(stderr, "GitNano will only use objects from .gitnano repository.\n");
+        return 1; // Conflict detected
+    }
+    return 0; // No conflict
+}
+
+// Validate path is within GitNano directory (not Git)
+int is_gitnano_path(const char *path) {
+    if (!path) return 0;
+
+    // Check if path contains .git but not .gitnano
+    if (strstr(path, "/.git/") && !strstr(path, ".gitnano")) {
+        return 0; // This is a Git path, not GitNano
+    }
+
+    return 1; // Safe path
+}
+
+// Safe memory allocation helper functions
+void *safe_malloc(size_t size) {
+    void *ptr = malloc(size);
+    if (!ptr) {
+        fprintf(stderr, "ERROR: malloc failed for size %zu\n", size);
+        return NULL;
+    }
+    return ptr;
+}
+
+void *safe_realloc(void *ptr, size_t size) {
+    void *new_ptr = realloc(ptr, size);
+    if (!new_ptr && size > 0) {
+        fprintf(stderr, "ERROR: realloc failed for size %zu\n", size);
+        return NULL;
+    }
+    return new_ptr;
+}
+
+char *safe_strdup(const char *s) {
+    if (!s) return NULL;
+    char *dup = malloc(strlen(s) + 1);
+    if (!dup) {
+        fprintf(stderr, "ERROR: strdup failed\n");
+        return NULL;
+    }
+    strcpy(dup, s);
+    return dup;
 }

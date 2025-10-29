@@ -138,6 +138,12 @@ int commit_get_parent(const char *commit_sha1, char *parent_sha1_out) {
         return -1; // No parent
     }
 
+    // Verify parent commit exists in GitNano repository before returning
+    if (!commit_exists(commit.parent_sha1)) {
+        fprintf(stderr, "WARNING: Parent commit %s not found in GitNano repository (may be a Git commit)\n", commit.parent_sha1);
+        return -1; // Parent not found in GitNano repo
+    }
+
     strcpy(parent_sha1_out, commit.parent_sha1);
     return 0;
 }

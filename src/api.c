@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "gitnano.h"
 
 // Helper structure for file comparison
@@ -27,42 +28,15 @@ int gitnano_create_snapshot(const char *message, char *snapshot_id) {
         }
     }
 
-    // Build tree from current directory
-    char tree_sha1[SHA1_HEX_SIZE];
-    if ((err = tree_build(".", tree_sha1)) != 0) {
-        printf("ERROR: tree_build: %d\n", err);
+    // Reuse the commit logic from commands.c
+    err = gitnano_commit(message);
+    if (err != 0) {
         return err;
     }
 
-    // Get parent commit
-    char parent_sha1[SHA1_HEX_SIZE] = {0};
-    get_current_commit(parent_sha1);
-
-    // Create commit
-    char commit_sha1[SHA1_HEX_SIZE];
-    if ((err = commit_create(tree_sha1, strlen(parent_sha1) > 0 ? parent_sha1 : NULL,
-                      NULL, message, commit_sha1)) != 0) {
-        printf("ERROR: commit_create: %d\n", err);
-        return err;
-    }
-
-    // Update HEAD
-    char ref[MAX_PATH];
-    get_head_ref(ref);
-    if (strncmp(ref, "refs/heads/", 11) == 0) {
-        if ((err = write_file(ref, commit_sha1, strlen(commit_sha1))) != 0) {
-            printf("ERROR: write_file: %d\n", err);
-            return err;
-        }
-    } else {
-        if ((err = set_head_ref(commit_sha1)) != 0) {
-            printf("ERROR: set_head_ref: %d\n", err);
-            return err;
-        }
-    }
-
+    // Get the created commit ID
     if (snapshot_id) {
-        strcpy(snapshot_id, commit_sha1);
+        get_current_commit(snapshot_id);
     }
 
     return 0;
@@ -84,18 +58,16 @@ int gitnano_list_snapshots(gitnano_snapshot_info **snapshots, int *count) {
     }
 
     int capacity = 10;
-    *snapshots = malloc(capacity * sizeof(gitnano_snapshot_info));
+    *snapshots = safe_malloc(capacity * sizeof(gitnano_snapshot_info));
     if (!*snapshots) {
-        printf("ERROR: malloc failed\n");
         return -1;
     }
 
     while (strlen(current_sha1) > 0) {
         if (*count >= capacity) {
             capacity *= 2;
-            gitnano_snapshot_info *new_snapshots = realloc(*snapshots, capacity * sizeof(gitnano_snapshot_info));
+            gitnano_snapshot_info *new_snapshots = safe_realloc(*snapshots, capacity * sizeof(gitnano_snapshot_info));
             if (!new_snapshots) {
-                printf("ERROR: realloc failed\n");
                 free(*snapshots);
                 *snapshots = NULL;
                 return -1;
@@ -143,7 +115,7 @@ int gitnano_restore_snapshot(const char *snapshot_id) {
         return -1;
     }
 
-    if ((err = gitnano_checkout(snapshot_id)) != 0) {
+    if ((err = gitnano_checkout(snapshot_id, NULL)) != 0) {
         printf("ERROR: gitnano_checkout: %d\n", err);
         return err;
     }
@@ -185,11 +157,30 @@ int gitnano_get_file_at_snapshot(const char *snapshot_id, const char *file_path,
     }
 
     // Read blob content
-    if ((err = blob_read(entry->sha1, content, size)) != 0) {
-        printf("ERROR: blob_read: %d\n", err);
+    gitnano_object obj;
+    if ((err = object_read(entry->sha1, &obj)) != 0) {
         tree_free(entries);
         return err;
     }
+
+    if (strcmp(obj.type, "blob") != 0) {
+        object_free(&obj);
+        tree_free(entries);
+        return -1;
+    }
+
+    *content = safe_malloc(obj.size + 1);
+    if (!*content) {
+        object_free(&obj);
+        tree_free(entries);
+        return -1;
+    }
+
+    memcpy(*content, obj.data, obj.size);
+    (*content)[obj.size] = '\0';
+    *size = obj.size;
+
+    object_free(&obj);
     tree_free(entries);
 
     return 0;
@@ -197,7 +188,7 @@ int gitnano_get_file_at_snapshot(const char *snapshot_id, const char *file_path,
 
 // Add file to file list
 static int add_file_to_list(file_entry **list, const char *path, const char *sha1) {
-    file_entry *entry = malloc(sizeof(file_entry));
+    file_entry *entry = safe_malloc(sizeof(file_entry));
     if (!entry) return -1;
 
     strncpy(entry->path, path, sizeof(entry->path) - 1);
@@ -302,14 +293,14 @@ static int compare_trees(const char *tree1_sha1, const char *tree2_sha1, gitnano
             if (strcmp(f1->sha1, f2->sha1) != 0) {
                 modified = realloc(modified, (modified_count + 1) * sizeof(char*));
                 if (!modified) goto nomem;
-                modified[modified_count] = strdup(f1->path);
+                modified[modified_count] = safe_strdup(f1->path);
                 if (!modified[modified_count]) goto nomem;
                 modified_count++;
             }
         } else {
             deleted = realloc(deleted, (deleted_count + 1) * sizeof(char*));
             if (!deleted) goto nomem;
-            deleted[deleted_count] = strdup(f1->path);
+            deleted[deleted_count] = safe_strdup(f1->path);
             if (!deleted[deleted_count]) goto nomem;
             deleted_count++;
         }
@@ -320,7 +311,7 @@ static int compare_trees(const char *tree1_sha1, const char *tree2_sha1, gitnano
         if ((f2->sha1[0] & 0x80) == 0) {
             added = realloc(added, (added_count + 1) * sizeof(char*));
             if (!added) goto nomem;
-            added[added_count] = strdup(f2->path);
+            added[added_count] = safe_strdup(f2->path);
             if (!added[added_count]) goto nomem;
             added_count++;
         }
@@ -355,15 +346,14 @@ nomem:
 
 // Compare two snapshots
 int gitnano_compare_snapshots(const char *snapshot1, const char *snapshot2,
-                             gitnano_diff_result **diff) {
+                              gitnano_diff_result **diff) {
     int err;
     if (!snapshot1 || !snapshot2 || !diff) {
         return -1;
     }
 
-    *diff = malloc(sizeof(gitnano_diff_result));
+    *diff = safe_malloc(sizeof(gitnano_diff_result));
     if (!*diff) {
-        printf("ERROR: malloc failed\n");
         return -1;
     }
     memset(*diff, 0, sizeof(gitnano_diff_result));
@@ -397,7 +387,6 @@ cleanup:
 void gitnano_free_diff(gitnano_diff_result *diff) {
     if (!diff) return;
 
-    // Free individual file names
     for (int i = 0; i < diff->added_count; i++) {
         free(diff->added_files[i]);
     }
@@ -408,7 +397,6 @@ void gitnano_free_diff(gitnano_diff_result *diff) {
         free(diff->deleted_files[i]);
     }
 
-    // Free arrays
     free(diff->added_files);
     free(diff->modified_files);
     free(diff->deleted_files);

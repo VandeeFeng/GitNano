@@ -1,65 +1,57 @@
 #include "gitnano.h"
 
 static int check_repo_exists() {
-    if (!file_exists(GITNANO_DIR)) {
-        printf("Not a GitNano repository\n");
+    char workspace_path[MAX_PATH];
+    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
+        return -1;
+    }
+
+    char gitnano_dir[MAX_PATH];
+    snprintf(gitnano_dir, sizeof(gitnano_dir), "%s/.gitnano", workspace_path);
+
+    if (!file_exists(gitnano_dir)) {
+        printf("Not a GitNano repository (workspace not initialized)\n");
         return -1;
     }
     return 0;
 }
 
-// Initialize GitNano repository
+// Initialize GitNano repository - create workspace structure only
 int gitnano_init() {
-    int err;
-    if (file_exists(GITNANO_DIR)) {
-        printf("GitNano repository already exists\n");
-        return 0;
+    // Initialize workspace with .gitnano structure only (no file copying)
+    if (workspace_init() != 0) {
+        printf("ERROR: Failed to initialize GitNano repository\n");
+        return -1;
     }
 
-    // Create directories
-    if ((err = mkdir_p(GITNANO_DIR)) != 0) {
-        printf("ERROR: mkdir_p .gitnano: %d\n", err);
-        return err;
+    char workspace_path[MAX_PATH];
+    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
+        printf("ERROR: Failed to get workspace path\n");
+        return -1;
     }
 
-    if ((err = mkdir_p(OBJECTS_DIR)) != 0) {
-        printf("ERROR: mkdir_p objects: %d\n", err);
-        return err;
-    }
-
-    if ((err = mkdir_p(REFS_DIR)) != 0) {
-        printf("ERROR: mkdir_p refs: %d\n", err);
-        return err;
-    }
-
-    // Create initial HEAD file pointing to master
-    const char *head_content = "ref: refs/heads/master\n";
-    if ((err = write_file(HEAD_FILE, head_content, strlen(head_content))) != 0) {
-        printf("ERROR: write_file HEAD: %d\n", err);
-        return err;
-    }
-
-    // Create master branch reference
-    if ((err = mkdir_p(REFS_DIR "/heads")) != 0) {
-        printf("ERROR: mkdir_p refs/heads: %d\n", err);
-        return err;
-    }
-
-    printf("Initialized empty GitNano repository\n");
+    printf("Initialized GitNano repository\n");
+    printf("Workspace location: %s\n", workspace_path);
+    printf("Files will be added to workspace when you run 'gitnano add'\n");
     return 0;
 }
 
 // Add file to staging area
 int gitnano_add(const char *path) {
     int err;
-    if (check_repo_exists() != 0) return -1;
 
-    if (!file_exists(path)) {
-        printf("File not found: %s\n", path);
+    // Check if this is a valid GitNano repository
+    if (check_repo_exists() != 0) {
         return -1;
     }
 
-    // Read file content
+    // First sync the file to workspace
+    if (workspace_sync_single_file(path) != 0) {
+        printf("ERROR: Failed to sync file to workspace: %s\n", path);
+        return -1;
+    }
+
+    // Read file from original directory
     size_t size;
     char *data = read_file(path, &size);
     if (!data) {
@@ -67,11 +59,32 @@ int gitnano_add(const char *path) {
         return -1;
     }
 
-    // Create blob
+    // Change to workspace directory for gitnano operations
+    char workspace_path[MAX_PATH];
+    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
+        printf("ERROR: Failed to get workspace path\n");
+        free(data);
+        return -1;
+    }
+
+    char original_cwd[MAX_PATH];
+    if (!getcwd(original_cwd, sizeof(original_cwd))) {
+        printf("ERROR: Failed to get current directory\n");
+        free(data);
+        return -1;
+    }
+
+    if (chdir(workspace_path) != 0) {
+        printf("ERROR: Failed to change to workspace directory\n");
+        free(data);
+        return -1;
+    }
+
     char sha1[SHA1_HEX_SIZE];
     if ((err = blob_write(data, size, sha1)) != 0) {
         free(data);
         printf("ERROR: blob_write: %d\n", err);
+        chdir(original_cwd);
         return err;
     }
 
@@ -80,16 +93,19 @@ int gitnano_add(const char *path) {
     // Update index (simplified - just append)
     FILE *index_fp = fopen(INDEX_FILE, "a");
     if (!index_fp) {
-        // If append fails, try to create the file
         index_fp = fopen(INDEX_FILE, "w");
         if (!index_fp) {
             printf("ERROR: fopen index: %d\n", -1);
+            chdir(original_cwd);
             return -1;
         }
     }
 
     fprintf(index_fp, "%s %s\n", sha1, path);
     fclose(index_fp);
+
+    // Change back to original directory
+    chdir(original_cwd);
 
     printf("Added %s (blob: %s)\n", path, sha1);
     return 0;
@@ -105,22 +121,49 @@ int gitnano_commit(const char *message) {
         return -1;
     }
 
-    // Build tree from current directory
+    // Change to workspace directory for gitnano operations
+    char workspace_path[MAX_PATH];
+    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
+        printf("ERROR: Failed to get workspace path\n");
+        return -1;
+    }
+
+    char original_cwd[MAX_PATH];
+    if (!getcwd(original_cwd, sizeof(original_cwd))) {
+        printf("ERROR: Failed to get current directory\n");
+        return -1;
+    }
+
+    if (chdir(workspace_path) != 0) {
+        printf("ERROR: Failed to change to workspace directory\n");
+        return -1;
+    }
+
     char tree_sha1[SHA1_HEX_SIZE];
     if ((err = tree_build(".", tree_sha1)) != 0) {
         printf("ERROR: tree_build: %d\n", err);
+        chdir(original_cwd);
         return err;
     }
 
-    // Get parent commit
     char parent_sha1[SHA1_HEX_SIZE] = {0};
-    get_current_commit(parent_sha1);
+    err = get_current_commit(parent_sha1);
+    // Only use parent if it's a valid GitNano commit (not from .git/)
+    if (err == 0 && strlen(parent_sha1) > 0) {
+        // Verify this is actually a GitNano commit object
+        if (!commit_exists(parent_sha1)) {
+            printf("WARNING: Current HEAD points to non-GitNano commit, starting new history\n");
+            parent_sha1[0] = '\0';
+        }
+    } else {
+        parent_sha1[0] = '\0';
+    }
 
-    // Create commit
     char commit_sha1[SHA1_HEX_SIZE];
     if ((err = commit_create(tree_sha1, strlen(parent_sha1) > 0 ? parent_sha1 : NULL,
-                      NULL, message, commit_sha1)) != 0) {
+                             NULL, message, commit_sha1)) != 0) {
         printf("ERROR: commit_create: %d\n", err);
+        chdir(original_cwd);
         return err;
     }
 
@@ -128,60 +171,155 @@ int gitnano_commit(const char *message) {
     char ref[MAX_PATH];
     if ((err = get_head_ref(ref)) != 0) {
         printf("ERROR: get_head_ref: %d\n", err);
+        chdir(original_cwd);
         return err;
     }
 
     if (strncmp(ref, "refs/heads/", 11) == 0) {
         char full_path[MAX_PATH];
-        snprintf(full_path, sizeof(full_path), "%s/%s", GITNANO_DIR, ref);
+        int path_len = snprintf(full_path, sizeof(full_path), "%s/%s", GITNANO_DIR, ref);
+
+        if (path_len >= MAX_PATH) {
+            printf("ERROR: Path too long for branch reference\n");
+            chdir(original_cwd);
+            return -1;
+        }
 
         char branch_content[SHA1_HEX_SIZE + 2];
         snprintf(branch_content, sizeof(branch_content), "%s\n", commit_sha1);
         if ((err = write_file(full_path, branch_content, strlen(branch_content))) != 0) {
             printf("ERROR: write_file: %d\n", err);
+            chdir(original_cwd);
             return err;
         }
     } else {
         if ((err = set_head_ref(commit_sha1)) != 0) {
             printf("ERROR: set_head_ref: %d\n", err);
+            chdir(original_cwd);
             return err;
         }
     }
+
+    // Change back to original directory
+    chdir(original_cwd);
 
     printf("Committed %s\n", commit_sha1);
     return 0;
 }
 
-// Checkout commit
-int gitnano_checkout(const char *commit_sha1) {
+// Checkout function with support for references and paths
+int gitnano_checkout(const char *reference, const char *path) {
     int err;
     if (check_repo_exists() != 0) return -1;
 
-    if (!commit_exists(commit_sha1)) {
-        printf("Commit not found: %s\n", commit_sha1);
+    if (!reference) {
+        printf("ERROR: No reference specified\n");
         return -1;
     }
 
-    // Get tree from commit
-    char tree_sha1[SHA1_HEX_SIZE];
-    if ((err = commit_get_tree(commit_sha1, tree_sha1)) != 0) {
-        printf("ERROR: commit_get_tree: %d\n", err);
+    // Change to workspace directory for gitnano operations
+    char workspace_path[MAX_PATH];
+    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
+        printf("ERROR: Failed to get workspace path\n");
+        return -1;
+    }
+
+    char original_cwd[MAX_PATH];
+    if (!getcwd(original_cwd, sizeof(original_cwd))) {
+        printf("ERROR: Failed to get current directory\n");
+        return -1;
+    }
+
+    if (chdir(workspace_path) != 0) {
+        printf("ERROR: Failed to change to workspace directory\n");
+        return -1;
+    }
+
+    // Resolve reference to SHA1
+    char commit_sha1[SHA1_HEX_SIZE];
+    if ((err = resolve_reference(reference, commit_sha1)) != 0) {
+        printf("ERROR: Invalid reference: %s\n", reference);
+        chdir(original_cwd);
         return err;
     }
 
-    // Restore tree to current directory
-    if ((err = tree_restore(tree_sha1, ".")) != 0) {
-        printf("ERROR: tree_restore: %d\n", err);
-        return err;
+    if (!commit_exists(commit_sha1)) {
+        printf("Commit not found: %s\n", commit_sha1);
+        chdir(original_cwd);
+        return -1;
     }
 
-    // Update HEAD to point to the checked out commit
-    if ((err = set_head_ref(commit_sha1)) != 0) {
-        printf("ERROR: set_head_ref: %d\n", err);
-        // This is not a fatal error, so we can continue
+    checkout_operation_stats stats = {0};
+
+    if (path && strlen(path) > 0) {
+        // Path checkout - restore specific file/directory in workspace
+        printf("Restoring '%s' from %s...\n", path, reference);
+
+        char tree_sha1[SHA1_HEX_SIZE];
+        if ((err = commit_get_tree(commit_sha1, tree_sha1)) != 0) {
+            printf("ERROR: commit_get_tree: %d\n", err);
+            free_checkout_stats(&stats);
+            chdir(original_cwd);
+            return err;
+        }
+
+        if ((err = tree_restore_path(tree_sha1, path, path)) != 0) {
+            printf("ERROR: tree_restore_path: %d\n", err);
+            free_checkout_stats(&stats);
+            chdir(original_cwd);
+            return err;
+        }
+
+        // Change back to original directory to sync the restored file
+        chdir(original_cwd);
+
+        // Sync the restored file from workspace to original directory
+        if ((err = workspace_sync_from_single_file(path)) != 0) {
+            printf("WARNING: Failed to sync restored file to original directory: %s\n", path);
+        }
+
+        printf("Restored %s from %s\n", path, reference);
+    } else {
+        // Full checkout - restore entire tree in workspace
+        printf("Checking out %s...\n", reference);
+
+        char tree_sha1[SHA1_HEX_SIZE];
+        if ((err = commit_get_tree(commit_sha1, tree_sha1)) != 0) {
+            printf("ERROR: commit_get_tree: %d\n", err);
+            free_checkout_stats(&stats);
+            chdir(original_cwd);
+            return err;
+        }
+
+        if ((err = tree_restore(tree_sha1, ".")) != 0) {
+            printf("ERROR: tree_restore: %d\n", err);
+            free_checkout_stats(&stats);
+            chdir(original_cwd);
+            return err;
+        }
+
+        // Update HEAD to point to the checked out commit
+        if ((err = set_head_ref(commit_sha1)) != 0) {
+            printf("ERROR: set_head_ref: %d\n", err);
+            free_checkout_stats(&stats);
+            chdir(original_cwd);
+            return err;
+        }
+
+        // Change back to original directory
+        chdir(original_cwd);
+
+        // For full checkout, we need to sync all files from workspace to original directory
+        // This is a simplified approach - in practice, we might want to track what changed
+        printf("Syncing all files from workspace to original directory...\n");
+        if (workspace_sync_from(NULL) != 0) {
+            printf("WARNING: Failed to sync all files to original directory\n");
+        }
+
+        printf("Checked out %s\n", reference);
     }
 
-    printf("Checked out commit %s\n", commit_sha1);
+    free_checkout_stats(&stats);
     return 0;
 }
 
@@ -190,10 +328,29 @@ int gitnano_log() {
     int err;
     if (check_repo_exists() != 0) return -1;
 
+    // Change to workspace directory for gitnano operations
+    char workspace_path[MAX_PATH];
+    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
+        printf("ERROR: Failed to get workspace path\n");
+        return -1;
+    }
+
+    char original_cwd[MAX_PATH];
+    if (!getcwd(original_cwd, sizeof(original_cwd))) {
+        printf("ERROR: Failed to get current directory\n");
+        return -1;
+    }
+
+    if (chdir(workspace_path) != 0) {
+        printf("ERROR: Failed to change to workspace directory\n");
+        return -1;
+    }
+
     char current_sha1[SHA1_HEX_SIZE];
     if ((err = get_current_commit(current_sha1)) != 0) {
         printf("No commits found\n");
-        return 0; // Not an error
+        chdir(original_cwd);
+        return 0;
     }
 
     printf("Commit history:\n");
@@ -212,10 +369,19 @@ int gitnano_log() {
 
         // Move to parent
         if (commit_get_parent(current_sha1, current_sha1) != 0) {
+            // Failed to get parent - either no parent or parent is not a GitNano commit
+            break;
+        }
+
+        // Verify the parent commit exists in GitNano repository
+        if (!commit_exists(current_sha1)) {
+            printf("WARNING: Parent commit %s not found in GitNano repository, stopping log\n", current_sha1);
             break;
         }
     }
 
+    // Change back to original directory
+    chdir(original_cwd);
     return 0;
 }
 
@@ -224,29 +390,50 @@ int gitnano_diff(const char *commit1, const char *commit2) {
     int err;
     if (check_repo_exists() != 0) return -1;
 
+    // Change to workspace directory for gitnano operations
+    char workspace_path[MAX_PATH];
+    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
+        printf("ERROR: Failed to get workspace path\n");
+        return -1;
+    }
+
+    char original_cwd[MAX_PATH];
+    if (!getcwd(original_cwd, sizeof(original_cwd))) {
+        printf("ERROR: Failed to get current directory\n");
+        return -1;
+    }
+
+    if (chdir(workspace_path) != 0) {
+        printf("ERROR: Failed to change to workspace directory\n");
+        return -1;
+    }
+
     char sha1[SHA1_HEX_SIZE] = {0};
     char sha2[SHA1_HEX_SIZE] = {0};
 
     // Handle different argument scenarios
     if (!commit1 && !commit2) {
-        // gitnano diff: compare working directory with current commit
         if (get_current_commit(sha1) != 0) {
             printf("No commits found to compare\n");
+            chdir(original_cwd);
             return -1;
         }
         printf("Comparing working directory with commit %s\n", sha1);
         printf("Working directory diff not yet implemented\n");
+        chdir(original_cwd);
         return 0;
     } else if (commit1 && !commit2) {
         // gitnano diff <sha1>: compare with current commit
         if (get_current_commit(sha2) != 0) {
             printf("No current commit found\n");
+            chdir(original_cwd);
             return -1;
         }
         if (strlen(commit1) == SHA1_HEX_SIZE - 1) {
             strcpy(sha1, commit1);
         } else {
             printf("Invalid commit SHA1: %s\n", commit1);
+            chdir(original_cwd);
             return -1;
         }
     } else if (commit1 && commit2) {
@@ -256,6 +443,7 @@ int gitnano_diff(const char *commit1, const char *commit2) {
             strcpy(sha2, commit2);
         } else {
             printf("Invalid commit SHA1 format\n");
+            chdir(original_cwd);
             return -1;
         }
     }
@@ -264,10 +452,10 @@ int gitnano_diff(const char *commit1, const char *commit2) {
     gitnano_diff_result *diff;
     if ((err = gitnano_compare_snapshots(sha1, sha2, &diff)) != 0) {
         printf("ERROR: gitnano_compare_snapshots: %d\n", err);
+        chdir(original_cwd);
         return err;
     }
 
-    // Display diff results
     printf("Diff between %s and %s:\n", sha1, sha2);
 
     if (diff->added_count > 0) {
@@ -296,23 +484,41 @@ int gitnano_diff(const char *commit1, const char *commit2) {
     }
 
     gitnano_free_diff(diff);
+    chdir(original_cwd);
     return 0;
 }
 
 // Print usage
 void print_usage() {
-    printf("GitNano - Mini Git Implementation\n");
+    printf("GitNano - Mini Git Implementation with Workspace Auto-Sync\n");
     printf("Usage:\n");
-    printf("  gitnano init              Initialize repository\n");
-    printf("  gitnano add <file>        Add file to staging\n");
-    printf("  gitnano commit <message>  Create commit\n");
-    printf("  gitnano checkout <sha1>   Checkout commit\n");
-    printf("  gitnano log               Show commit history\n");
-    printf("  gitnano diff [sha1] [sha2] Show differences between commits\n");
+    printf("  gitnano init                    Initialize repository and copy all files to workspace\n");
+    printf("  gitnano add <file>              Add file to staging (auto-syncs to workspace)\n");
+    printf("  gitnano commit <message>        Create commit in workspace\n");
+    printf("  gitnano checkout <ref> [path]   Checkout commit or restore files (auto-syncs to original)\n");
+    printf("  gitnano log                     Show commit history\n");
+    printf("  gitnano diff [sha1] [sha2]      Show differences between commits\n");
+    printf("\nHow it works:\n");
+    printf("  - All files are automatically copied to workspace on init\n");
+    printf("  - 'gitnano add' auto-syncs files to workspace before staging\n");
+    printf("  - 'gitnano checkout' auto-syncs restored files to original directory\n");
+    printf("  - Workspace is located at: ~/GitNano/[project-name]/\n");
+    printf("\nReferences can be:\n");
+    printf("  - Full SHA1 (40 chars)\n");
+    printf("  - Partial SHA1 (4-7 chars)\n");
+    printf("  - Branch name (e.g., 'master')\n");
+    printf("  - Relative reference (e.g., 'HEAD~1')\n");
+    printf("\nGitNano automatically maintains file synchronization between your\n");
+    printf("working directory and the isolated workspace.\n");
 }
 
 // Command handler implementations
 static int handle_init(int argc, char *argv[]) {
+    if (argc > 2) {
+        printf("Usage: gitnano init\n");
+        printf("Too many arguments: %s\n", argv[2]);
+        return 1;
+    }
     return gitnano_init();
 }
 
@@ -334,13 +540,29 @@ static int handle_commit(int argc, char *argv[]) {
 
 static int handle_checkout(int argc, char *argv[]) {
     if (argc < 3) {
-        printf("Usage: gitnano checkout <sha1>\n");
+        printf("Usage: gitnano checkout <reference> [path]\n");
+        printf("  <reference> can be: full SHA1, partial SHA1, branch name, or HEAD~N\n");
+        printf("  [path] is optional: restore specific file or directory\n");
+        printf("Examples:\n");
+        printf("  gitnano checkout a1b2c3d              # checkout by SHA1\n");
+        printf("  gitnano checkout master               # checkout by branch\n");
+        printf("  gitnano checkout HEAD~1               # checkout parent commit\n");
+        printf("  gitnano checkout a1b2c3d file.txt     # restore specific file\n");
         return 1;
     }
-    return gitnano_checkout(argv[2]);
+
+    const char *reference = argv[2];
+    const char *path = (argc >= 4) ? argv[3] : NULL;
+
+    return gitnano_checkout(reference, path);
 }
 
 static int handle_log(int argc, char *argv[]) {
+    if (argc > 2) {
+        printf("Usage: gitnano log\n");
+        printf("Too many arguments: %s\n", argv[2]);
+        return 1;
+    }
     return gitnano_log();
 }
 

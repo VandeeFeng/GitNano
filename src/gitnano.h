@@ -25,6 +25,15 @@
 #define HEAD_FILE GITNANO_DIR "/HEAD"
 #define INDEX_FILE GITNANO_DIR "/index"
 
+// Command structure for main.c dispatch
+typedef int (*command_handler_t)(int argc, char *argv[]);
+typedef struct {
+    const char *name;
+    command_handler_t handler;
+} command_t;
+
+extern const command_t commands[];
+
 // Object structure
 typedef struct {
     char type[10];
@@ -78,19 +87,31 @@ typedef struct {
     int staged_files;
 } gitnano_status_info;
 
+// Checkout operation statistics
+typedef struct {
+    int modified_count;
+    int added_count;
+    int deleted_count;
+    char **modified_files;
+    char **added_files;
+    char **deleted_files;
+} checkout_operation_stats;
+
 // Core API functions
 int gitnano_init();
 int gitnano_add(const char *path);
 int gitnano_commit(const char *message);
-int gitnano_checkout(const char *commit_sha1);
+int gitnano_checkout(const char *reference, const char *path);
 int gitnano_log();
 int gitnano_diff(const char *commit1, const char *commit2);
+int gitnano_sync(const char *direction, const char *path);
 void print_usage();
 
 // Reference management functions (refs.c)
 int get_head_ref(char *ref_out);
 int set_head_ref(const char *ref);
 int get_current_commit(char *sha1_out);
+int resolve_reference(const char *reference, char *sha1_out);
 
 // Object storage functions
 int object_write(const char *type, const void *data, size_t size, char *sha1_out);
@@ -108,13 +129,16 @@ int blob_cat(const char *sha1, FILE *out);
 
 // Tree functions
 tree_entry *tree_entry_new(const char *mode, const char *type,
-                          const char *sha1, const char *name);
+                           const char *sha1, const char *name);
 int tree_build(const char *path, char *sha1_out);
 int tree_parse(const char *sha1, tree_entry **entries);
 int tree_write(tree_entry *entries, char *sha1_out);
 void tree_free(tree_entry *entries);
 tree_entry *tree_find(tree_entry *entries, const char *name);
 int tree_restore(const char *tree_sha1, const char *target_dir);
+int tree_restore_path(const char *tree_sha1, const char *tree_path, const char *target_path);
+void free_checkout_stats(checkout_operation_stats *stats);
+void print_checkout_summary(const checkout_operation_stats *stats);
 
 // Commit functions
 void get_current_user(char *author, size_t size);
@@ -138,6 +162,31 @@ char *read_file(const char *path, size_t *size);
 int write_file(const char *path, const void *data, size_t size);
 void get_git_timestamp(char *timestamp, size_t size);
 void get_object_path(const char *sha1, char *path);
+int check_git_nano_conflict(void);
+int is_gitnano_path(const char *path);
+
+// Safe memory allocation helper functions
+void *safe_malloc(size_t size);
+void *safe_realloc(void *ptr, size_t size);
+char *safe_strdup(const char *s);
+
+// Workspace management functions
+int get_workspace_name(char *workspace_name, size_t size);
+int get_workspace_path(char *workspace_path, size_t size);
+int get_original_path_from_workspace(const char *workspace_file_path, char *original_path, size_t size);
+int get_workspace_file_path(const char *original_file_path, char *workspace_file_path, size_t size);
+int workspace_init();
+int workspace_exists();
+int workspace_is_initialized();
+int workspace_sync_single_file(const char *path);
+int workspace_sync_from_single_file(const char *path);
+// Legacy sync functions (will be deprecated)
+int workspace_sync_to(const char *path);
+int workspace_sync_from(const char *path);
+int workspace_copy_directory(const char *src, const char *dst, const char *exclude_dir);
+int workspace_file_exists(const char *path);
+char *workspace_read_file(const char *path, size_t *size);
+int workspace_write_file(const char *path, const void *data, size_t size);
 
 // High-level API functions
 int gitnano_create_snapshot(const char *message, char *snapshot_id);
@@ -146,18 +195,9 @@ int gitnano_restore_snapshot(const char *snapshot_id);
 int gitnano_get_file_at_snapshot(const char *snapshot_id, const char *file_path,
                                  char **content, size_t *size);
 int gitnano_compare_snapshots(const char *snapshot1, const char *snapshot2,
-                             gitnano_diff_result **diff);
+                              gitnano_diff_result **diff);
 void gitnano_free_diff(gitnano_diff_result *diff);
 int gitnano_status(gitnano_status_info *status);
 void gitnano_cleanup();
-
-// Command structure for main.c dispatch
-typedef int (*command_handler_t)(int argc, char *argv[]);
-typedef struct {
-    const char *name;
-    command_handler_t handler;
-} command_t;
-
-extern const command_t commands[];
 
 #endif // GITNANO_H
