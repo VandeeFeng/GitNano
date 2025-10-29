@@ -90,3 +90,14 @@ void get_git_timestamp(char *timestamp, size_t size) {
 void get_object_path(const char *sha1, char *path) {
     snprintf(path, MAX_PATH, "%s/%.2s/%s", OBJECTS_DIR, sha1, sha1 + 2);
 }
+
+// Print commit hash with first 6 characters in orange
+void print_colored_hash(const char *sha1) {
+    if (!sha1 || strlen(sha1) < 6) {
+        printf("%s", sha1 ? sha1 : "(null)");
+        return;
+    }
+
+    // Orange color ANSI escape code
+    printf("\x1b[38;5;208m%.6s\x1b[0m%s", sha1, sha1 + 6);
+}

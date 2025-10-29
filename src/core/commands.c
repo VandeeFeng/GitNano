@@ -115,7 +115,9 @@ int gitnano_add(const char *path) {
     // Change back to original directory
     chdir(original_cwd);
 
-    printf("Added %s (blob: %s)\n", path, sha1);
+    printf("Added %s (blob: ", path);
+    print_colored_hash(sha1);
+    printf(")\n");
     return 0;
 }
 
@@ -218,7 +220,9 @@ int gitnano_commit(const char *message) {
     // Change back to original directory
     chdir(original_cwd);
 
-    printf("Committed %s\n", commit_sha1);
+    printf("Committed ");
+    print_colored_hash(commit_sha1);
+    printf("\n");
     return 0;
 }
 
@@ -259,7 +263,9 @@ int gitnano_checkout(const char *reference, const char *path) {
     }
 
     if (!commit_exists(commit_sha1)) {
-        printf("Commit not found: %s\n", commit_sha1);
+        printf("Commit not found: ");
+        print_colored_hash(commit_sha1);
+        printf("\n");
         chdir(original_cwd);
         return -1;
     }
@@ -387,7 +393,9 @@ int gitnano_log() {
             break;
         }
 
-        printf("\ncommit %s\n", current_sha1);
+        printf("\ncommit ");
+        print_colored_hash(current_sha1);
+        printf("\n");
         printf("Author: %s\n", commit.author);
         printf("Date:   %s\n", commit.timestamp);
         printf("\n    %s\n", commit.message);
@@ -443,7 +451,9 @@ int gitnano_diff(const char *commit1, const char *commit2) {
             chdir(original_cwd);
             return -1;
         }
-        printf("Comparing working directory with commit %s\n", sha1);
+        printf("Comparing working directory with commit ");
+        print_colored_hash(sha1);
+        printf("\n");
 
         // Get current commit's tree first (while still in workspace)
         char commit_tree_sha1[SHA1_HEX_SIZE];
@@ -635,7 +645,11 @@ int gitnano_diff(const char *commit1, const char *commit2) {
         return err;
     }
 
-    printf("Diff between %s and %s:\n", sha1, sha2);
+    printf("Diff between ");
+        print_colored_hash(sha1);
+        printf(" and ");
+        print_colored_hash(sha2);
+        printf(":\n");
 
     if (diff->added_count > 0) {
         printf("\nAdded files (%d):\n", diff->added_count);
@@ -850,6 +864,7 @@ static file_entry *find_file_in_list(file_entry *list, const char *path) {
     }
     return NULL;
 }
+
 
 // Array of commands
 const command_t commands[] = {

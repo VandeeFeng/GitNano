@@ -120,6 +120,7 @@ int get_head_ref(char *ref_out);
 int set_head_ref(const char *ref);
 int get_current_commit(char *sha1_out);
 int resolve_reference(const char *reference, char *sha1_out);
+void print_colored_hash(const char *sha1);
 
 // Object storage functions
 int object_write(const char *type, const void *data, size_t size, char *sha1_out);

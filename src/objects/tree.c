@@ -463,7 +463,9 @@ int tree_restore(const char *tree_sha1, const char *target_dir) {
         return -1;
     }
 
-    printf("Restoring tree %s to %s...\n", tree_sha1, target_dir);
+    printf("Restoring tree ");
+    print_colored_hash(tree_sha1);
+    printf(" to %s...\n", target_dir);
 
     // First, collect target files for cleanup operations
     file_entry *target_files = NULL;
