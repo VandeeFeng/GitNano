@@ -2,10 +2,14 @@
 
 // Calculate hash of object data
 int object_hash(const char *type, const void *data, size_t size, char *sha1_out) {
+    int err;
     // Create header: type + ' ' + size + '\0'
     size_t header_len = strlen(type) + 1 + 20 + 1; // type + space + size + null
     char *header = malloc(header_len);
-    if (!header) return -1;
+    if (!header) {
+        printf("ERROR: malloc header: %d\n", -1);
+        return -1;
+    }
 
     snprintf(header, header_len, "%s %zu", type, size);
 
@@ -13,6 +17,7 @@ int object_hash(const char *type, const void *data, size_t size, char *sha1_out)
     size_t total_size = strlen(header) + 1 + size;
     char *combined = malloc(total_size);
     if (!combined) {
+        printf("ERROR: malloc combined: %d\n", -1);
         free(header);
         return -1;
     }
@@ -21,20 +26,27 @@ int object_hash(const char *type, const void *data, size_t size, char *sha1_out)
     memcpy(combined + strlen(header) + 1, data, size);
 
     // Calculate SHA-1
-    int result = sha1_data(combined, total_size, sha1_out);
+    if ((err = sha1_data(combined, total_size, sha1_out)) != 0) {
+        printf("ERROR: sha1_data: %d\n", err);
+        free(header);
+        free(combined);
+        return err;
+    }
 
     free(header);
     free(combined);
-    return result;
+    return 0;
 }
 
 // Write object to object store
 int object_write(const char *type, const void *data, size_t size, char *sha1_out) {
+    int err;
     char sha1[SHA1_HEX_SIZE];
 
     // Calculate object hash
-    if (object_hash(type, data, size, sha1) != 0) {
-        return -1;
+    if ((err = object_hash(type, data, size, sha1)) != 0) {
+        printf("ERROR: object_hash: %d\n", err);
+        return err;
     }
 
     // Check if object already exists
@@ -52,20 +64,25 @@ int object_write(const char *type, const void *data, size_t size, char *sha1_out
     // Create object directory
     char dir_path[MAX_PATH];
     snprintf(dir_path, sizeof(dir_path), "%s/%.2s", OBJECTS_DIR, sha1);
-    if (mkdir_p(dir_path) != 0) {
-        return -1;
+    if ((err = mkdir_p(dir_path)) != 0) {
+        printf("ERROR: mkdir_p: %d\n", err);
+        return err;
     }
 
     // Create object content: header + '\0' + data
     size_t header_len = strlen(type) + 1 + 20 + 1;
     char *header = malloc(header_len);
-    if (!header) return -1;
+    if (!header) {
+        printf("ERROR: malloc header: %d\n", -1);
+        return -1;
+    }
 
     snprintf(header, header_len, "%s %zu", type, size);
 
     size_t content_size = strlen(header) + 1 + size;
     char *content = malloc(content_size);
     if (!content) {
+        printf("ERROR: malloc content: %d\n", -1);
         free(header);
         return -1;
     }
@@ -76,28 +93,36 @@ int object_write(const char *type, const void *data, size_t size, char *sha1_out
     // Compress content
     void *compressed = NULL;
     size_t compressed_size = 0;
-    if (compress_data(content, content_size, &compressed, &compressed_size) != 0) {
+    if ((err = compress_data(content, content_size, &compressed, &compressed_size)) != 0) {
+        printf("ERROR: compress_data: %d\n", err);
         free(header);
         free(content);
-        return -1;
+        return err;
     }
 
     // Write compressed data to file
-    int result = write_file(path, compressed, compressed_size);
+    if ((err = write_file(path, compressed, compressed_size)) != 0) {
+        printf("ERROR: write_file: %d\n", err);
+        free(header);
+        free(content);
+        free(compressed);
+        return err;
+    }
 
     free(header);
     free(content);
     free(compressed);
 
-    if (result == 0 && sha1_out) {
+    if (sha1_out) {
         strcpy(sha1_out, sha1);
     }
 
-    return result;
+    return 0;
 }
 
 // Read object from object store
 int object_read(const char *sha1, gitnano_object *obj) {
+    int err;
     char path[MAX_PATH];
     get_object_path(sha1, path);
 
@@ -109,15 +134,17 @@ int object_read(const char *sha1, gitnano_object *obj) {
     size_t compressed_size;
     char *compressed = read_file(path, &compressed_size);
     if (!compressed) {
+        printf("ERROR: read_file: %d\n", -1);
         return -1;
     }
 
     // Decompress data
     void *decompressed = NULL;
     size_t decompressed_size = 0;
-    if (decompress_data(compressed, compressed_size, &decompressed, &decompressed_size) != 0) {
+    if ((err = decompress_data(compressed, compressed_size, &decompressed, &decompressed_size)) != 0) {
+        printf("ERROR: decompress_data: %d\n", err);
         free(compressed);
-        return -1;
+        return err;
     }
 
     free(compressed);
@@ -125,6 +152,7 @@ int object_read(const char *sha1, gitnano_object *obj) {
     // Parse header: "type size\0"
     char *null_pos = memchr(decompressed, '\0', decompressed_size);
     if (!null_pos) {
+        printf("ERROR: null position not found\n");
         free(decompressed);
         return -1;
     }
@@ -132,6 +160,7 @@ int object_read(const char *sha1, gitnano_object *obj) {
     size_t header_len = null_pos - (char*)decompressed;
     char *header = malloc(header_len + 1);
     if (!header) {
+        printf("ERROR: malloc header: %d\n", -1);
         free(decompressed);
         return -1;
     }
@@ -142,6 +171,7 @@ int object_read(const char *sha1, gitnano_object *obj) {
     // Parse type and size from header
     char *space_pos = strchr(header, ' ');
     if (!space_pos) {
+        printf("ERROR: space position not found\n");
         free(header);
         free(decompressed);
         return -1;
@@ -154,6 +184,7 @@ int object_read(const char *sha1, gitnano_object *obj) {
     // Copy data
     obj->data = malloc(obj->size);
     if (!obj->data) {
+        printf("ERROR: malloc obj->data: %d\n", -1);
         free(header);
         free(decompressed);
         return -1;

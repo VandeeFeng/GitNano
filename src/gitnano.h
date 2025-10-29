@@ -151,4 +151,13 @@ void gitnano_free_diff(gitnano_diff_result *diff);
 int gitnano_status(gitnano_status_info *status);
 void gitnano_cleanup();
 
+// Command structure for main.c dispatch
+typedef int (*command_handler_t)(int argc, char *argv[]);
+typedef struct {
+    const char *name;
+    command_handler_t handler;
+} command_t;
+
+extern const command_t commands[];
+
 #endif // GITNANO_H

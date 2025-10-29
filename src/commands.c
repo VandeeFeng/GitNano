@@ -1,39 +1,48 @@
 #include "gitnano.h"
 
+static int check_repo_exists() {
+    if (!file_exists(GITNANO_DIR)) {
+        printf("Not a GitNano repository\n");
+        return -1;
+    }
+    return 0;
+}
+
 // Initialize GitNano repository
 int gitnano_init() {
+    int err;
     if (file_exists(GITNANO_DIR)) {
         printf("GitNano repository already exists\n");
         return 0;
     }
 
     // Create directories
-    if (mkdir_p(GITNANO_DIR) != 0) {
-        perror("Failed to create .gitnano directory");
-        return -1;
+    if ((err = mkdir_p(GITNANO_DIR)) != 0) {
+        printf("ERROR: mkdir_p .gitnano: %d\n", err);
+        return err;
     }
 
-    if (mkdir_p(OBJECTS_DIR) != 0) {
-        perror("Failed to create objects directory");
-        return -1;
+    if ((err = mkdir_p(OBJECTS_DIR)) != 0) {
+        printf("ERROR: mkdir_p objects: %d\n", err);
+        return err;
     }
 
-    if (mkdir_p(REFS_DIR) != 0) {
-        perror("Failed to create refs directory");
-        return -1;
+    if ((err = mkdir_p(REFS_DIR)) != 0) {
+        printf("ERROR: mkdir_p refs: %d\n", err);
+        return err;
     }
 
     // Create initial HEAD file pointing to master
     const char *head_content = "ref: refs/heads/master\n";
-    if (write_file(HEAD_FILE, head_content, strlen(head_content)) != 0) {
-        perror("Failed to create HEAD file");
-        return -1;
+    if ((err = write_file(HEAD_FILE, head_content, strlen(head_content))) != 0) {
+        printf("ERROR: write_file HEAD: %d\n", err);
+        return err;
     }
 
     // Create master branch reference
-    if (mkdir_p(REFS_DIR "/heads") != 0) {
-        perror("Failed to create heads directory");
-        return -1;
+    if ((err = mkdir_p(REFS_DIR "/heads")) != 0) {
+        printf("ERROR: mkdir_p refs/heads: %d\n", err);
+        return err;
     }
 
     printf("Initialized empty GitNano repository\n");
@@ -42,10 +51,8 @@ int gitnano_init() {
 
 // Add file to staging area
 int gitnano_add(const char *path) {
-    if (!file_exists(GITNANO_DIR)) {
-        printf("GitNano repository not found. Run 'gitnano init' first.\n");
-        return -1;
-    }
+    int err;
+    if (check_repo_exists() != 0) return -1;
 
     if (!file_exists(path)) {
         printf("File not found: %s\n", path);
@@ -62,10 +69,10 @@ int gitnano_add(const char *path) {
 
     // Create blob
     char sha1[SHA1_HEX_SIZE];
-    if (blob_write(data, size, sha1) != 0) {
+    if ((err = blob_write(data, size, sha1)) != 0) {
         free(data);
-        printf("Failed to create blob for: %s\n", path);
-        return -1;
+        printf("ERROR: blob_write: %d\n", err);
+        return err;
     }
 
     free(data);
@@ -73,13 +80,16 @@ int gitnano_add(const char *path) {
     // Update index (simplified - just append)
     FILE *index_fp = fopen(INDEX_FILE, "a");
     if (!index_fp) {
+        // If append fails, try to create the file
         index_fp = fopen(INDEX_FILE, "w");
+        if (!index_fp) {
+            printf("ERROR: fopen index: %d\n", -1);
+            return -1;
+        }
     }
 
-    if (index_fp) {
-        fprintf(index_fp, "%s %s\n", sha1, path);
-        fclose(index_fp);
-    }
+    fprintf(index_fp, "%s %s\n", sha1, path);
+    fclose(index_fp);
 
     printf("Added %s (blob: %s)\n", path, sha1);
     return 0;
@@ -87,10 +97,8 @@ int gitnano_add(const char *path) {
 
 // Create commit
 int gitnano_commit(const char *message) {
-    if (!file_exists(GITNANO_DIR)) {
-        printf("GitNano repository not found. Run 'gitnano init' first.\n");
-        return -1;
-    }
+    int err;
+    if (check_repo_exists() != 0) return -1;
 
     if (!message || strlen(message) == 0) {
         printf("Commit message cannot be empty\n");
@@ -99,9 +107,9 @@ int gitnano_commit(const char *message) {
 
     // Build tree from current directory
     char tree_sha1[SHA1_HEX_SIZE];
-    if (tree_build(".", tree_sha1) != 0) {
-        printf("Failed to build tree from current directory\n");
-        return -1;
+    if ((err = tree_build(".", tree_sha1)) != 0) {
+        printf("ERROR: tree_build: %d\n", err);
+        return err;
     }
 
     // Get parent commit
@@ -110,51 +118,34 @@ int gitnano_commit(const char *message) {
 
     // Create commit
     char commit_sha1[SHA1_HEX_SIZE];
-    if (commit_create(tree_sha1, strlen(parent_sha1) > 0 ? parent_sha1 : NULL,
-                      NULL, message, commit_sha1) != 0) {
-        printf("Failed to create commit\n");
-        return -1;
+    if ((err = commit_create(tree_sha1, strlen(parent_sha1) > 0 ? parent_sha1 : NULL,
+                      NULL, message, commit_sha1)) != 0) {
+        printf("ERROR: commit_create: %d\n", err);
+        return err;
     }
 
     // Update HEAD
     char ref[MAX_PATH];
-    if (get_head_ref(ref) != 0) {
-        // Error reading HEAD
-        return -1;
+    if ((err = get_head_ref(ref)) != 0) {
+        printf("ERROR: get_head_ref: %d\n", err);
+        return err;
     }
 
     if (strncmp(ref, "refs/heads/", 11) == 0) {
-        // Construct full path to branch file
         char full_path[MAX_PATH];
-        if (strlen(GITNANO_DIR) + 1 + strlen(ref) < MAX_PATH) {
-            strcpy(full_path, GITNANO_DIR);
-            strcat(full_path, "/");
-            strcat(full_path, ref);
-        } else {
-            printf("Error: Path too long\n");
-            return -1;
-        }
+        snprintf(full_path, sizeof(full_path), "%s/%s", GITNANO_DIR, ref);
 
-        // Branch reference - check if branch file exists
-        if (file_exists(full_path)) {
-            // Update existing branch file with commit SHA1 and newline
-            char branch_content[SHA1_HEX_SIZE + 2];
-            snprintf(branch_content, sizeof(branch_content), "%s\n", commit_sha1);
-            write_file(full_path, branch_content, strlen(branch_content));
-        } else {
-            // First commit on this branch - create branch file
-            char branch_content[SHA1_HEX_SIZE + 2];
-            snprintf(branch_content, sizeof(branch_content), "%s\n", commit_sha1);
-            write_file(full_path, branch_content, strlen(branch_content));
-        }
-    } else {
-        // Direct SHA1 reference - this shouldn't happen in normal workflow
-        // Convert to branch reference
-        char master_ref[] = "refs/heads/master";
         char branch_content[SHA1_HEX_SIZE + 2];
         snprintf(branch_content, sizeof(branch_content), "%s\n", commit_sha1);
-        write_file(master_ref, branch_content, strlen(branch_content));
-        set_head_ref(master_ref);
+        if ((err = write_file(full_path, branch_content, strlen(branch_content))) != 0) {
+            printf("ERROR: write_file: %d\n", err);
+            return err;
+        }
+    } else {
+        if ((err = set_head_ref(commit_sha1)) != 0) {
+            printf("ERROR: set_head_ref: %d\n", err);
+            return err;
+        }
     }
 
     printf("Committed %s\n", commit_sha1);
@@ -163,10 +154,8 @@ int gitnano_commit(const char *message) {
 
 // Checkout commit
 int gitnano_checkout(const char *commit_sha1) {
-    if (!file_exists(GITNANO_DIR)) {
-        printf("GitNano repository not found. Run 'gitnano init' first.\n");
-        return -1;
-    }
+    int err;
+    if (check_repo_exists() != 0) return -1;
 
     if (!commit_exists(commit_sha1)) {
         printf("Commit not found: %s\n", commit_sha1);
@@ -175,20 +164,21 @@ int gitnano_checkout(const char *commit_sha1) {
 
     // Get tree from commit
     char tree_sha1[SHA1_HEX_SIZE];
-    if (commit_get_tree(commit_sha1, tree_sha1) != 0) {
-        printf("Failed to get tree from commit\n");
-        return -1;
+    if ((err = commit_get_tree(commit_sha1, tree_sha1)) != 0) {
+        printf("ERROR: commit_get_tree: %d\n", err);
+        return err;
     }
 
     // Restore tree to current directory
-    if (tree_restore(tree_sha1, ".") != 0) {
-        printf("Failed to restore tree from commit %s\n", commit_sha1);
-        return -1;
+    if ((err = tree_restore(tree_sha1, ".")) != 0) {
+        printf("ERROR: tree_restore: %d\n", err);
+        return err;
     }
 
     // Update HEAD to point to the checked out commit
-    if (set_head_ref(commit_sha1) != 0) {
-        printf("Warning: Failed to update HEAD reference\n");
+    if ((err = set_head_ref(commit_sha1)) != 0) {
+        printf("ERROR: set_head_ref: %d\n", err);
+        // This is not a fatal error, so we can continue
     }
 
     printf("Checked out commit %s\n", commit_sha1);
@@ -197,22 +187,21 @@ int gitnano_checkout(const char *commit_sha1) {
 
 // Show commit log
 int gitnano_log() {
-    if (!file_exists(GITNANO_DIR)) {
-        printf("GitNano repository not found. Run 'gitnano init' first.\n");
-        return -1;
-    }
+    int err;
+    if (check_repo_exists() != 0) return -1;
 
     char current_sha1[SHA1_HEX_SIZE];
-    if (get_current_commit(current_sha1) != 0) {
+    if ((err = get_current_commit(current_sha1)) != 0) {
         printf("No commits found\n");
-        return 0;
+        return 0; // Not an error
     }
 
     printf("Commit history:\n");
 
     while (strlen(current_sha1) > 0) {
         gitnano_commit_info commit;
-        if (commit_parse(current_sha1, &commit) != 0) {
+        if ((err = commit_parse(current_sha1, &commit)) != 0) {
+            printf("ERROR: commit_parse: %d\n", err);
             break;
         }
 
@@ -232,10 +221,8 @@ int gitnano_log() {
 
 // Show diff between commits
 int gitnano_diff(const char *commit1, const char *commit2) {
-    if (!file_exists(GITNANO_DIR)) {
-        printf("GitNano repository not found. Run 'gitnano init' first.\n");
-        return -1;
-    }
+    int err;
+    if (check_repo_exists() != 0) return -1;
 
     char sha1[SHA1_HEX_SIZE] = {0};
     char sha2[SHA1_HEX_SIZE] = {0};
@@ -248,7 +235,8 @@ int gitnano_diff(const char *commit1, const char *commit2) {
             return -1;
         }
         printf("Comparing working directory with commit %s\n", sha1);
-        return 0; // TODO: Implement working directory comparison
+        printf("Working directory diff not yet implemented\n");
+        return 0;
     } else if (commit1 && !commit2) {
         // gitnano diff <sha1>: compare with current commit
         if (get_current_commit(sha2) != 0) {
@@ -274,9 +262,9 @@ int gitnano_diff(const char *commit1, const char *commit2) {
 
     // Compare the two commits
     gitnano_diff_result *diff;
-    if (gitnano_compare_snapshots(sha1, sha2, &diff) != 0) {
-        printf("Failed to compare commits\n");
-        return -1;
+    if ((err = gitnano_compare_snapshots(sha1, sha2, &diff)) != 0) {
+        printf("ERROR: gitnano_compare_snapshots: %d\n", err);
+        return err;
     }
 
     // Display diff results
@@ -322,3 +310,57 @@ void print_usage() {
     printf("  gitnano log               Show commit history\n");
     printf("  gitnano diff [sha1] [sha2] Show differences between commits\n");
 }
+
+// Command handler implementations
+static int handle_init(int argc, char *argv[]) {
+    return gitnano_init();
+}
+
+static int handle_add(int argc, char *argv[]) {
+    if (argc < 3) {
+        printf("Usage: gitnano add <file>\n");
+        return 1;
+    }
+    return gitnano_add(argv[2]);
+}
+
+static int handle_commit(int argc, char *argv[]) {
+    if (argc < 3) {
+        printf("Usage: gitnano commit <message>\n");
+        return 1;
+    }
+    return gitnano_commit(argv[2]);
+}
+
+static int handle_checkout(int argc, char *argv[]) {
+    if (argc < 3) {
+        printf("Usage: gitnano checkout <sha1>\n");
+        return 1;
+    }
+    return gitnano_checkout(argv[2]);
+}
+
+static int handle_log(int argc, char *argv[]) {
+    return gitnano_log();
+}
+
+static int handle_diff(int argc, char *argv[]) {
+    if (argc > 4) {
+        printf("Usage: gitnano diff [sha1] [sha2]\n");
+        return 1;
+    }
+    const char *sha1 = (argc >= 3) ? argv[2] : NULL;
+    const char *sha2 = (argc == 4) ? argv[3] : NULL;
+    return gitnano_diff(sha1, sha2);
+}
+
+// Array of commands
+const command_t commands[] = {
+    {"init", handle_init},
+    {"add", handle_add},
+    {"commit", handle_commit},
+    {"checkout", handle_checkout},
+    {"log", handle_log},
+    {"diff", handle_diff},
+    {NULL, NULL} // Sentinel to mark the end of the array
+};

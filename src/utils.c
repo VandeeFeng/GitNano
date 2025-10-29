@@ -6,15 +6,20 @@
 // Compute SHA-1 hash of a file
 int sha1_file(const char *path, char *sha1_out) {
     FILE *fp = fopen(path, "rb");
-    if (!fp) return -1;
+    if (!fp) {
+        printf("ERROR: fopen: %d\n", -1);
+        return -1;
+    }
 
     EVP_MD_CTX *md_ctx = EVP_MD_CTX_new();
     if (!md_ctx) {
+        printf("ERROR: EVP_MD_CTX_new: %d\n", -1);
         fclose(fp);
         return -1;
     }
 
     if (EVP_DigestInit_ex(md_ctx, EVP_sha1(), NULL) != 1) {
+        printf("ERROR: EVP_DigestInit_ex: %d\n", -1);
         EVP_MD_CTX_free(md_ctx);
         fclose(fp);
         return -1;
@@ -24,6 +29,7 @@ int sha1_file(const char *path, char *sha1_out) {
     size_t bytes_read;
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
         if (EVP_DigestUpdate(md_ctx, buffer, bytes_read) != 1) {
+            printf("ERROR: EVP_DigestUpdate: %d\n", -1);
             EVP_MD_CTX_free(md_ctx);
             fclose(fp);
             return -1;
@@ -35,6 +41,7 @@ int sha1_file(const char *path, char *sha1_out) {
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int digest_len;
     if (EVP_DigestFinal_ex(md_ctx, digest, &digest_len) != 1) {
+        printf("ERROR: EVP_DigestFinal_ex: %d\n", -1);
         EVP_MD_CTX_free(md_ctx);
         return -1;
     }
@@ -52,14 +59,19 @@ int sha1_file(const char *path, char *sha1_out) {
 // Compute SHA-1 hash of data in memory
 int sha1_data(const void *data, size_t size, char *sha1_out) {
     EVP_MD_CTX *md_ctx = EVP_MD_CTX_new();
-    if (!md_ctx) return -1;
+    if (!md_ctx) {
+        printf("ERROR: EVP_MD_CTX_new: %d\n", -1);
+        return -1;
+    }
 
     if (EVP_DigestInit_ex(md_ctx, EVP_sha1(), NULL) != 1) {
+        printf("ERROR: EVP_DigestInit_ex: %d\n", -1);
         EVP_MD_CTX_free(md_ctx);
         return -1;
     }
 
     if (EVP_DigestUpdate(md_ctx, data, size) != 1) {
+        printf("ERROR: EVP_DigestUpdate: %d\n", -1);
         EVP_MD_CTX_free(md_ctx);
         return -1;
     }
@@ -67,6 +79,7 @@ int sha1_data(const void *data, size_t size, char *sha1_out) {
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int digest_len;
     if (EVP_DigestFinal_ex(md_ctx, digest, &digest_len) != 1) {
+        printf("ERROR: EVP_DigestFinal_ex: %d\n", -1);
         EVP_MD_CTX_free(md_ctx);
         return -1;
     }
@@ -86,10 +99,14 @@ int compress_data(const void *input, size_t input_size,
                   void **output, size_t *output_size) {
     uLongf compressed_size = compressBound(input_size);
     *output = malloc(compressed_size);
-    if (!*output) return -1;
+    if (!*output) {
+        printf("ERROR: malloc: %d\n", -1);
+        return -1;
+    }
 
     int result = compress2(*output, &compressed_size, input, input_size, 9);
     if (result != Z_OK) {
+        printf("ERROR: compress2: %d\n", result);
         free(*output);
         return -1;
     }
@@ -104,7 +121,10 @@ int decompress_data(const void *input, size_t input_size,
     // Start with a reasonable estimate
     uLongf decompressed_size = input_size * 4;
     *output = malloc(decompressed_size);
-    if (!*output) return -1;
+    if (!*output) {
+        printf("ERROR: malloc: %d\n", -1);
+        return -1;
+    }
 
     int result;
     while (1) {
@@ -120,11 +140,15 @@ int decompress_data(const void *input, size_t input_size,
             free(*output);
             decompressed_size *= 2;
             *output = malloc(decompressed_size);
-            if (!*output) return -1;
+            if (!*output) {
+                printf("ERROR: malloc: %d\n", -1);
+                return -1;
+            }
             continue;
         }
 
         // Other error
+        printf("ERROR: uncompress: %d\n", result);
         free(*output);
         return -1;
     }
@@ -147,6 +171,7 @@ int mkdir_p(const char *path) {
         if (*p == '/') {
             *p = 0;
             if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+                printf("ERROR: mkdir: %d\n", -1);
                 return -1;
             }
             *p = '/';
@@ -154,6 +179,7 @@ int mkdir_p(const char *path) {
     }
 
     if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+        printf("ERROR: mkdir: %d\n", -1);
         return -1;
     }
 
@@ -195,12 +221,20 @@ char *read_file(const char *path, size_t *size) {
 // Write data to file
 int write_file(const char *path, const void *data, size_t size) {
     FILE *fp = fopen(path, "wb");
-    if (!fp) return -1;
+    if (!fp) {
+        printf("ERROR: fopen: %d\n", -1);
+        return -1;
+    }
 
     size_t bytes_written = fwrite(data, 1, size, fp);
     fclose(fp);
 
-    return (bytes_written == size) ? 0 : -1;
+    if (bytes_written != size) {
+        printf("ERROR: fwrite incomplete\n");
+        return -1;
+    }
+
+    return 0;
 }
 
 // Get current timestamp in git format

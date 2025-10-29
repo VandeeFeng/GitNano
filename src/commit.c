@@ -15,154 +15,96 @@ void get_current_user(char *author, size_t size) {
 // Create commit object
 int commit_create(const char *tree_sha1, const char *parent_sha1,
                   const char *author, const char *message, char *sha1_out) {
+    int err;
     if (!tree_sha1 || !message) return -1;
 
-    // Build commit content
-    size_t commit_size = 0;
-    char *commit_data = NULL;
-
-    // Calculate size
-    commit_size += strlen("tree ") + strlen(tree_sha1) + 1; // "tree <sha1>\n"
+    gitnano_commit_info commit;
+    strncpy(commit.tree_sha1, tree_sha1, sizeof(commit.tree_sha1) - 1);
+    commit.tree_sha1[sizeof(commit.tree_sha1) - 1] = '\0';
 
     if (parent_sha1) {
-        commit_size += strlen("parent ") + strlen(parent_sha1) + 1;
-    }
-
-    char timestamp[32];
-    get_git_timestamp(timestamp, sizeof(timestamp));
-
-    char full_author[512];
-    if (author) {
-        strncpy(full_author, author, sizeof(full_author) - 1);
+        strncpy(commit.parent_sha1, parent_sha1, sizeof(commit.parent_sha1) - 1);
+        commit.parent_sha1[sizeof(commit.parent_sha1) - 1] = '\0';
     } else {
-        get_current_user(full_author, sizeof(full_author));
+        commit.parent_sha1[0] = '\0';
     }
 
-    commit_size += strlen("author ") + strlen(full_author) + 1 + strlen(timestamp) + 1;
-    commit_size += strlen("committer ") + strlen(full_author) + 1 + strlen(timestamp) + 2; // extra \n
-    commit_size += 1 + strlen(message) + 1; // \n + message + \n
+    if (author) {
+        strncpy(commit.author, author, sizeof(commit.author) - 1);
+        commit.author[sizeof(commit.author) - 1] = '\0';
+    } else {
+        get_current_user(commit.author, sizeof(commit.author));
+    }
 
-    // Allocate memory
-    commit_data = malloc(commit_size);
-    if (!commit_data) return -1;
+    get_git_timestamp(commit.timestamp, sizeof(commit.timestamp));
+    strncpy(commit.message, message, sizeof(commit.message) - 1);
+    commit.message[sizeof(commit.message) - 1] = '\0';
 
-    // Build commit content
-    char *ptr = commit_data;
-
-    // Tree line
-    ptr += sprintf(ptr, "tree %s\n", tree_sha1);
-
-    // Parent line (optional)
+    char commit_content[2048];
+    int len = 0;
+    len += sprintf(commit_content + len, "tree %s\n", commit.tree_sha1);
     if (parent_sha1) {
-        ptr += sprintf(ptr, "parent %s\n", parent_sha1);
+        len += sprintf(commit_content + len, "parent %s\n", commit.parent_sha1);
+    }
+    len += sprintf(commit_content + len, "author %s %s\n", commit.author, commit.timestamp);
+    len += sprintf(commit_content + len, "committer %s %s\n", commit.author, commit.timestamp);
+    len += sprintf(commit_content + len, "\n%s\n", commit.message);
+
+    if ((err = object_write("commit", commit_content, len, sha1_out)) != 0) {
+        printf("ERROR: object_write: %d\n", err);
+        return err;
     }
 
-    // Author line
-    ptr += sprintf(ptr, "author %s %s\n", full_author, timestamp);
-
-    // Committer line
-    ptr += sprintf(ptr, "committer %s %s\n", full_author, timestamp);
-
-    // Empty line and message
-    ptr += sprintf(ptr, "\n%s\n", message);
-
-    // Write commit object
-    int result = object_write("commit", commit_data, strlen(commit_data), sha1_out);
-
-    free(commit_data);
-    return result;
+    return 0;
 }
 
 // Parse commit object
+static const char* find_commit_field(const char* commit_data, const char* field_name) {
+    const char* field = strstr(commit_data, field_name);
+    if (field) {
+        return field + strlen(field_name);
+    }
+    return NULL;
+}
+
 int commit_parse(const char *sha1, gitnano_commit_info *commit) {
+    int err;
     gitnano_object obj;
-
-    if (object_read(sha1, &obj) != 0) {
-        return -1;
-    }
-
-    if (strcmp(obj.type, "commit") != 0) {
+    if ((err = object_read(sha1, &obj)) != 0 || strcmp(obj.type, "commit") != 0) {
         object_free(&obj);
-        return -1;
+        printf("ERROR: object_read or type check: %d\n", err);
+        return err ? err : -1;
     }
 
-    char *content = obj.data;
-    char *line_end;
-
-    // Initialize commit structure
     memset(commit, 0, sizeof(gitnano_commit_info));
+    const char *data = (const char *)obj.data;
 
-    // Parse tree line
-    if (strncmp(content, "tree ", 5) == 0) {
-        line_end = strchr(content + 5, '\n');
-        if (line_end) {
-            size_t len = line_end - (content + 5);
-            if (len < SHA1_HEX_SIZE - 1) {
-                strncpy(commit->tree_sha1, content + 5, len);
-                commit->tree_sha1[len] = '\0';
-            }
-            content = line_end + 1;
+    const char *tree = find_commit_field(data, "tree ");
+    if (tree) sscanf(tree, "%40s", commit->tree_sha1);
+
+    const char *parent = find_commit_field(data, "parent ");
+    if (parent) sscanf(parent, "%40s", commit->parent_sha1);
+
+    const char *author = find_commit_field(data, "author ");
+    if (author) {
+        const char *email_start = strchr(author, '<');
+        if (email_start) {
+            strncpy(commit->author, author, email_start - author - 1);
+            commit->author[sizeof(commit->author) - 1] = '\0';
         }
     }
 
-    // Parse parent line (optional)
-    if (strncmp(content, "parent ", 7) == 0) {
-        line_end = strchr(content + 7, '\n');
-        if (line_end) {
-            size_t len = line_end - (content + 7);
-            if (len < SHA1_HEX_SIZE - 1) {
-                strncpy(commit->parent_sha1, content + 7, len);
-                commit->parent_sha1[len] = '\0';
-            }
-            content = line_end + 1;
+    const char *committer = find_commit_field(data, "committer ");
+    if (committer) {
+        const char *timestamp_start = strrchr(committer, ' ');
+        if (timestamp_start) {
+            sscanf(timestamp_start + 1, "%s", commit->timestamp);
         }
     }
 
-    // Parse author line
-    if (strncmp(content, "author ", 7) == 0) {
-        line_end = strchr(content + 7, '\n');
-        if (line_end) {
-            size_t len = line_end - (content + 7);
-            if (len < sizeof(commit->author) - 1) {
-                strncpy(commit->author, content + 7, len);
-                commit->author[len] = '\0';
-            }
-            content = line_end + 1;
-        }
-    }
-
-    // Parse committer line
-    if (strncmp(content, "committer ", 10) == 0) {
-        line_end = strchr(content + 10, '\n');
-        if (line_end) {
-            // Extract timestamp from committer line
-            char *space = strrchr(content + 10, ' ');
-            if (space) {
-                size_t len = space - (content + 10);
-                if (len < sizeof(commit->timestamp) - 1) {
-                    strncpy(commit->timestamp, content + 10, len);
-                    commit->timestamp[len] = '\0';
-                }
-            }
-            content = line_end + 1;
-        }
-    }
-
-    // Skip empty line
-    if (*content == '\n') {
-        content++;
-    }
-
-    // Parse message
-    line_end = strchr(content, '\n');
-    if (line_end) {
-        size_t len = line_end - content;
-        if (len < sizeof(commit->message) - 1) {
-            strncpy(commit->message, content, len);
-            commit->message[len] = '\0';
-        }
-    } else {
-        strncpy(commit->message, content, sizeof(commit->message) - 1);
+    const char *message = strstr(data, "\n\n");
+    if (message) {
+        strncpy(commit->message, message + 2, sizeof(commit->message) - 1);
         commit->message[sizeof(commit->message) - 1] = '\0';
     }
 
@@ -172,9 +114,11 @@ int commit_parse(const char *sha1, gitnano_commit_info *commit) {
 
 // Get commit tree
 int commit_get_tree(const char *commit_sha1, char *tree_sha1_out) {
+    int err;
     gitnano_commit_info commit;
-    if (commit_parse(commit_sha1, &commit) != 0) {
-        return -1;
+    if ((err = commit_parse(commit_sha1, &commit)) != 0) {
+        printf("ERROR: commit_parse: %d\n", err);
+        return err;
     }
 
     strcpy(tree_sha1_out, commit.tree_sha1);
@@ -183,9 +127,11 @@ int commit_get_tree(const char *commit_sha1, char *tree_sha1_out) {
 
 // Get commit parent
 int commit_get_parent(const char *commit_sha1, char *parent_sha1_out) {
+    int err;
     gitnano_commit_info commit;
-    if (commit_parse(commit_sha1, &commit) != 0) {
-        return -1;
+    if ((err = commit_parse(commit_sha1, &commit)) != 0) {
+        printf("ERROR: commit_parse: %d\n", err);
+        return err;
     }
 
     if (strlen(commit.parent_sha1) == 0) {
@@ -198,13 +144,16 @@ int commit_get_parent(const char *commit_sha1, char *parent_sha1_out) {
 
 // Check if commit exists
 int commit_exists(const char *sha1) {
+    int err;
     char path[MAX_PATH];
     get_object_path(sha1, path);
 
     if (!file_exists(path)) return 0;
 
     gitnano_object obj;
-    if (object_read(sha1, &obj) != 0) return 0;
+    if ((err = object_read(sha1, &obj)) != 0) {
+        return 0;
+    }
 
     int is_commit = (strcmp(obj.type, "commit") == 0);
     object_free(&obj);
