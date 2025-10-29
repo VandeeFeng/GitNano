@@ -293,7 +293,6 @@ int get_current_commit(char *sha1_out) {
         construct_full_path(ref, full_path);
 
         if (!file_exists(full_path)) {
-            fprintf(stderr, "ERROR: get_current_commit: branch file does not exist: %s\n", full_path);
             sha1_out[0] = '\0';
             return -1;
         }
