@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "../include/gitnano.h"
+#include "../include/memory.h"
 
 // Global test configuration
 static char original_cwd[MAX_PATH];
@@ -49,9 +50,9 @@ static void cleanup_workspace_directory() {
 #define TEST_TEARDOWN() \
     do { \
         chdir(original_cwd); \
-        char cleanup_cmd[MAX_PATH]; \
-        snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf %s", test_base_dir); \
+        char *cleanup_cmd = safe_asprintf("rm -rf %s", test_base_dir); \
         system(cleanup_cmd); \
+        free(cleanup_cmd); \
     } while(0)
 
 // Helper function to create a test file

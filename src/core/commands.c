@@ -1,11 +1,15 @@
 #define _GNU_SOURCE
 #include "gitnano.h"
+#include "diff.h"
 #include <dirent.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <strings.h>
 
 static int check_repo_exists();
 static int auto_sync_working_files();
-static int collect_tree_files(const char *tree_sha1, file_entry **files_out);
-static file_entry *find_file_in_list(file_entry *list, const char *path);
 
 static int check_repo_exists() {
     char workspace_path[MAX_PATH];
@@ -415,265 +419,83 @@ int gitnano_log() {
 
 // Show diff between commits
 int gitnano_diff(const char *commit1, const char *commit2) {
-    int err;
+    char workspace_path[MAX_PATH];
+    char original_cwd[MAX_PATH];
+    char sha1[SHA1_HEX_SIZE] = {0};
+    char sha2[SHA1_HEX_SIZE] = {0};
+
+    // Basic validation
     if (check_repo_exists() != 0) return -1;
 
-    // Change to workspace directory for gitnano operations
-    char workspace_path[MAX_PATH];
+    // Setup workspace paths
     if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
         printf("ERROR: Failed to get workspace path\n");
         return -1;
     }
 
-    char original_cwd[MAX_PATH];
     if (!getcwd(original_cwd, sizeof(original_cwd))) {
         printf("ERROR: Failed to get current directory\n");
         return -1;
     }
 
+    // Change to workspace directory for gitnano operations
     if (chdir(workspace_path) != 0) {
         printf("ERROR: Failed to change to workspace directory\n");
         return -1;
     }
 
-    char sha1[SHA1_HEX_SIZE] = {0};
-    char sha2[SHA1_HEX_SIZE] = {0};
-
     // Handle different argument scenarios
     if (!commit1 && !commit2) {
+        // Diff working directory with current commit
         if (get_current_commit(sha1) != 0) {
             printf("No commits found to compare\n");
             chdir(original_cwd);
             return -1;
         }
+
         printf("Comparing working directory with commit ");
         print_colored_hash(sha1);
         printf("\n");
 
-        // Get current commit's tree first (while still in workspace)
-        char commit_tree_sha1[SHA1_HEX_SIZE];
-        if ((err = commit_get_tree(sha1, commit_tree_sha1)) != 0) {
-            printf("ERROR: Failed to get tree from current commit: %d\n", err);
-            chdir(original_cwd);
-            return err;
-        }
-
-        // Now we have current commit's tree, let's implement simple file comparison
-        printf("Working directory changes:\n");
-
-        // Get current commit tree files (while still in workspace)
-        file_entry *commit_files = NULL;
-        int added_count = 0, modified_count = 0, deleted_count = 0;
-
-        if (collect_tree_files(commit_tree_sha1, &commit_files) == 0) {
-            // Change back to original directory to check working directory files
-            if (chdir(original_cwd) != 0) {
-                printf("ERROR: Failed to change back to original directory\n");
-                free_file_list(commit_files);
-                return -1;
-            }
-
-            // Check working directory files
-            DIR *dir = opendir(".");
-            if (dir) {
-                struct dirent *entry;
-                while ((entry = readdir(dir)) != NULL) {
-                    // Skip ., .., and .gitnano directory
-                    if (strcmp(entry->d_name, ".") == 0 ||
-                        strcmp(entry->d_name, "..") == 0 ||
-                        strcmp(entry->d_name, ".gitnano") == 0) {
-                        continue;
-                    }
-
-                    struct stat st;
-                    if (stat(entry->d_name, &st) == 0 && S_ISREG(st.st_mode)) {
-                        // It's a regular file, check if it's in commit
-                        file_entry *commit_file = find_file_in_list(commit_files, entry->d_name);
-                        if (!commit_file) {
-                            // New file
-                            added_count++;
-                        } else {
-                            // File exists in commit, check if modified using system diff
-                            char diff_cmd[MAX_PATH * 3];
-                            char workspace_path[MAX_PATH];
-                            get_workspace_path(workspace_path, sizeof(workspace_path));
-                            snprintf(diff_cmd, sizeof(diff_cmd), "diff -q %s %s/%s >/dev/null 2>&1",
-                                     entry->d_name, workspace_path, entry->d_name);
-
-                            int result = system(diff_cmd);
-                            if (result != 0) {
-                                // File is modified
-                                modified_count++;
-                            }
-                        }
-                    }
-                }
-                closedir(dir);
-            }
-
-            // Check for deleted files
-            file_entry *c = commit_files;
-            while (c) {
-                struct stat st;
-                if (stat(c->path, &st) != 0) {
-                    // File doesn't exist in working directory
-                    deleted_count++;
-                }
-                c = c->next;
-            }
-
-            // Display results
-            if (added_count > 0) {
-                printf("\nAdded files (%d):\n", added_count);
-                DIR *dir = opendir(".");
-                if (dir) {
-                    struct dirent *entry;
-                    while ((entry = readdir(dir)) != NULL) {
-                        if (strcmp(entry->d_name, ".") == 0 ||
-                            strcmp(entry->d_name, "..") == 0 ||
-                            strcmp(entry->d_name, ".gitnano") == 0) {
-                            continue;
-                        }
-                        struct stat st;
-                        if (stat(entry->d_name, &st) == 0 && S_ISREG(st.st_mode)) {
-                            if (!find_file_in_list(commit_files, entry->d_name)) {
-                                printf("  + %s\n", entry->d_name);
-                            }
-                        }
-                    }
-                    closedir(dir);
-                }
-            }
-
-            if (modified_count > 0) {
-                printf("\nModified files (%d):\n", modified_count);
-                DIR *dir = opendir(".");
-                if (dir) {
-                    struct dirent *entry;
-                    while ((entry = readdir(dir)) != NULL) {
-                        if (strcmp(entry->d_name, ".") == 0 ||
-                            strcmp(entry->d_name, "..") == 0 ||
-                            strcmp(entry->d_name, ".gitnano") == 0) {
-                            continue;
-                        }
-                        struct stat st;
-                        if (stat(entry->d_name, &st) == 0 && S_ISREG(st.st_mode)) {
-                            file_entry *commit_file = find_file_in_list(commit_files, entry->d_name);
-                            if (commit_file) {
-                                char diff_cmd[MAX_PATH * 3];
-                                char workspace_path[MAX_PATH];
-                                get_workspace_path(workspace_path, sizeof(workspace_path));
-                                snprintf(diff_cmd, sizeof(diff_cmd), "diff -q %s %s/%s >/dev/null 2>&1",
-                                         entry->d_name, workspace_path, entry->d_name);
-
-                                int result = system(diff_cmd);
-                                if (result != 0) {
-                                    printf("  M %s\n", entry->d_name);
-                                }
-                            }
-                        }
-                    }
-                    closedir(dir);
-                }
-            }
-
-            if (deleted_count > 0) {
-                printf("\nDeleted files (%d):\n", deleted_count);
-                file_entry *c = commit_files;
-                while (c) {
-                    struct stat st;
-                    if (stat(c->path, &st) != 0) {
-                        printf("  - %s\n", c->path);
-                    }
-                    c = c->next;
-                }
-            }
-
-            if (added_count == 0 && modified_count == 0 && deleted_count == 0) {
-                printf("\nNo changes in working directory.\n");
-            }
-
-            free_file_list(commit_files);
-        } else {
-            printf("ERROR: Failed to get current commit files\n");
-            return -1;
-        }
-
-
-        // Change back to original directory before returning
+        // Change back to original directory for working directory comparison
         if (chdir(original_cwd) != 0) {
             printf("ERROR: Failed to change back to original directory\n");
             return -1;
         }
-        return 0;
-    } else if (commit1 && !commit2) {
-        // gitnano diff <sha1>: compare with current commit
+
+        return diff_working_directory(sha1);
+    }
+
+    // Handle commit-to-commit diff scenarios
+    if (commit1 && !commit2) {
+        // Diff specified commit with current commit
         if (get_current_commit(sha2) != 0) {
             printf("No current commit found\n");
             chdir(original_cwd);
             return -1;
         }
-        if (strlen(commit1) == SHA1_HEX_SIZE - 1) {
-            strcpy(sha1, commit1);
-        } else {
+
+        if (strlen(commit1) != SHA1_HEX_SIZE - 1) {
             printf("Invalid commit SHA1: %s\n", commit1);
             chdir(original_cwd);
             return -1;
         }
+        strcpy(sha1, commit1);
     } else if (commit1 && commit2) {
-        // gitnano diff <sha1> <sha2>: compare two commits
-        if (strlen(commit1) == SHA1_HEX_SIZE - 1 && strlen(commit2) == SHA1_HEX_SIZE - 1) {
-            strcpy(sha1, commit1);
-            strcpy(sha2, commit2);
-        } else {
+        // Diff two specified commits
+        if (strlen(commit1) != SHA1_HEX_SIZE - 1 || strlen(commit2) != SHA1_HEX_SIZE - 1) {
             printf("Invalid commit SHA1 format\n");
             chdir(original_cwd);
             return -1;
         }
+        strcpy(sha1, commit1);
+        strcpy(sha2, commit2);
     }
 
-    // Compare the two commits
-    gitnano_diff_result *diff;
-    if ((err = gitnano_compare_snapshots(sha1, sha2, &diff)) != 0) {
-        printf("ERROR: gitnano_compare_snapshots: %d\n", err);
-        chdir(original_cwd);
-        return err;
-    }
-
-    printf("Diff between ");
-    print_colored_hash(sha1);
-    printf(" and ");
-    print_colored_hash(sha2);
-    printf(":\n");
-
-    if (diff->added_count > 0) {
-        printf("\nAdded files (%d):\n", diff->added_count);
-        for (int i = 0; i < diff->added_count; i++) {
-            printf("  + %s\n", diff->added_files[i]);
-        }
-    }
-
-    if (diff->modified_count > 0) {
-        printf("\nModified files (%d):\n", diff->modified_count);
-        for (int i = 0; i < diff->modified_count; i++) {
-            printf("  M %s\n", diff->modified_files[i]);
-        }
-    }
-
-    if (diff->deleted_count > 0) {
-        printf("\nDeleted files (%d):\n", diff->deleted_count);
-        for (int i = 0; i < diff->deleted_count; i++) {
-            printf("  - %s\n", diff->deleted_files[i]);
-        }
-    }
-
-    if (diff->added_count == 0 && diff->modified_count == 0 && diff->deleted_count == 0) {
-        printf("\nNo differences found.\n");
-    }
-
-    gitnano_free_diff(diff);
+    // Compare two commits using helper function
+    int result = compare_commits(sha1, sha2);
     chdir(original_cwd);
-    return 0;
+    return result;
 }
 
 // Auto-sync files based on diff results - used by commit
@@ -700,10 +522,11 @@ static int auto_sync_working_files() {
     int synced_files = 0;
 
     while ((entry = readdir(dir)) != NULL) {
-        // Skip ., .., and .gitnano directory
+        // Skip ., .., .gitnano directory and unsafe files
         if (strcmp(entry->d_name, ".") == 0 ||
             strcmp(entry->d_name, "..") == 0 ||
-            strcmp(entry->d_name, ".gitnano") == 0) {
+            strcmp(entry->d_name, ".gitnano") == 0 ||
+            !is_safe_filename(entry->d_name)) {
             continue;
         }
 
@@ -808,58 +631,6 @@ static int handle_diff(int argc, char *argv[]) {
     const char *sha2 = (argc == 4) ? argv[3] : NULL;
     return gitnano_diff(sha1, sha2);
 }
-
-// Helper function to collect files from a tree
-static int collect_tree_files(const char *tree_sha1, file_entry **files_out) {
-    int err;
-    *files_out = NULL;
-    tree_entry *entries = NULL;
-
-    if ((err = tree_parse(tree_sha1, &entries)) != 0) {
-        return err;
-    }
-
-    tree_entry *current = entries;
-    while (current) {
-        if (strcmp(current->type, "blob") == 0) {
-            file_entry *entry = safe_malloc(sizeof(file_entry));
-            if (!entry) {
-                tree_free(entries);
-                free_file_list(*files_out);
-                return -1;
-            }
-
-            entry->path = safe_strdup(current->name);
-            if (!entry->path) {
-                free(entry);
-                tree_free(entries);
-                free_file_list(*files_out);
-                return -1;
-            }
-
-            strncpy(entry->sha1, current->sha1, sizeof(entry->sha1) - 1);
-            entry->sha1[sizeof(entry->sha1) - 1] = '\0';
-            entry->next = *files_out;
-            *files_out = entry;
-        }
-        current = current->next;
-    }
-
-    tree_free(entries);
-    return 0;
-}
-
-// Helper function to find file in list
-static file_entry *find_file_in_list(file_entry *list, const char *path) {
-    while (list) {
-        if (strcmp(list->path, path) == 0) {
-            return list;
-        }
-        list = list->next;
-    }
-    return NULL;
-}
-
 
 // Array of commands
 const command_t commands[] = {
