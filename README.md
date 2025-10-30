@@ -12,7 +12,7 @@ GitNano differs from standard Git in the following key ways:
     `gitnano` maintains an isolated workspace in the `~/GitNano/[project-name]/` directory. When you run `gitnano add` or `gitnano checkout`, files are automatically synchronized between your project directory and this isolated workspace. This design separates the version control metadata from your working directory.
 
 2.  **Simplified Staging Area**:
-    The staging area in `gitnano` (the `.gitnano/index` file) is a simple text file that records the SHA-1 hash and path of each file. 
+    The staging area in `gitnano` (the `.gitnano/index` file) is a simple text file that records the SHA-1 hash and path of each file.
 
 ## Basic Commands
 
@@ -51,27 +51,39 @@ GitNano differs from standard Git in the following key ways:
 ### Prerequisites
 
 Before you begin, ensure you have the following installed:
-- `gcc` and `make`
+- `gcc` (C compiler)
 - `zlib` (for compression)
 - `openssl` (for cryptographic functions)
+- `make` (optional, used as wrapper for the nob.h build system)
 
 ### Build and Install
 
-1.  **Compile the project:**
+This project uses [nob.h](https://github.com/tsoding/nob.h/) instead of Makefile, but you can still use regular `make` commands as wrappers.
+
+1.  **Initialize the build system:**
+    ```bash
+    git submodule update --init
+    ```
+
+2.  **Bootstrap the build system (one-time setup):**
+    ```bash
+    cc -o nob nob.c
+    ```
+
+3.  **Compile the project:**
     ```bash
     make
     ```
 
-2.  **Install the executable:**
+4.  **Install the executable:**
     ```bash
     make install
     ```
     This will copy the `gitnano` binary to `~/.local/bin/`.
 
-3.  **Update your PATH:**
+5.  **Update your PATH:**
     To run `gitnano` from any directory, make sure `~/.local/bin` is in your system's `PATH`. You can do this by adding the following line to your shell's configuration file (e.g., `~/.bashrc` or `~/.zshrc`):
     ```bash
     export PATH="$HOME/.local/bin:$PATH"
     ```
     Remember to reload your shell's configuration (`source ~/.bashrc`)
-

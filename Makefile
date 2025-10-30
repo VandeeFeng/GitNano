@@ -1,85 +1,50 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -g -O2
-LDFLAGS = -lz -lssl -lcrypto
+# Simple Makefile wrapper for nob.h build system
+# This forwards all make targets to the nob build system
 
-SRCDIR = src
-TESTDIR = tests
-BUILDDIR = build
+.PHONY: all clean test install debug static-lib
 
-# Source files
-LIB_SOURCES = $(filter-out $(SRCDIR)/main.c,$(wildcard $(SRCDIR)/*.c))
-LIB_SOURCES += $(wildcard $(SRCDIR)/core/*.c)
-LIB_SOURCES += $(wildcard $(SRCDIR)/objects/*.c)
-LIB_SOURCES += $(wildcard $(SRCDIR)/utils/*.c)
+# Default target - build the main executable
+all:
+	@./nob
 
-# Convert source paths to object paths
-SRC_OBJECTS = $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(filter-out $(SRCDIR)/utils/%.c,$(filter-out $(SRCDIR)/core/%.c,$(filter-out $(SRCDIR)/objects/%.c,$(LIB_SOURCES)))))
-CORE_OBJECTS = $(patsubst $(SRCDIR)/core/%.c,$(BUILDDIR)/core/%.o,$(filter $(SRCDIR)/core/%.c,$(LIB_SOURCES)))
-OBJECTS_OBJECTS = $(patsubst $(SRCDIR)/objects/%.c,$(BUILDDIR)/objects/%.o,$(filter $(SRCDIR)/objects/%.c,$(LIB_SOURCES)))
-UTILS_OBJECTS = $(patsubst $(SRCDIR)/utils/%.c,$(BUILDDIR)/utils/%.o,$(filter $(SRCDIR)/utils/%.c,$(LIB_SOURCES)))
-LIB_OBJECTS = $(SRC_OBJECTS) $(CORE_OBJECTS) $(OBJECTS_OBJECTS) $(UTILS_OBJECTS)
-MAIN_OBJECT = $(BUILDDIR)/main.o
+# Build and run tests
+test:
+	@./nob test
 
-# Target executable
-TARGET = gitnano
-TEST_TARGET = test_runner
-STATIC_LIB = libgitnano.a
+# Clean build artifacts
+clean:
+	@./nob clean
 
-.PHONY: all clean test install
-
-all: $(TARGET)
-
-$(BUILDDIR):
-	mkdir -p $(BUILDDIR)
-	mkdir -p $(BUILDDIR)/core
-	mkdir -p $(BUILDDIR)/objects
-	mkdir -p $(BUILDDIR)/utils
-
-$(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
-	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
-
-$(BUILDDIR)/core/%.o: $(SRCDIR)/core/%.c | $(BUILDDIR)
-	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
-
-$(BUILDDIR)/objects/%.o: $(SRCDIR)/objects/%.c | $(BUILDDIR)
-	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
-
-$(BUILDDIR)/utils/%.o: $(SRCDIR)/utils/%.c | $(BUILDDIR)
-	$(CC) $(CFLAGS) -Iinclude -I$(SRCDIR)/utils -c $< -o $@
+# Debug build
+debug:
+	@./nob debug
 
 # Build static library
-$(STATIC_LIB): $(LIB_OBJECTS)
-	ar rcs $@ $(LIB_OBJECTS)
+static-lib:
+	@./nob static-lib
 
-# Build main executable
-$(TARGET): $(LIB_OBJECTS) $(MAIN_OBJECT)
-	$(CC) $(LIB_OBJECTS) $(MAIN_OBJECT) $(LDFLAGS) -o $@
+# Install to ~/.local/bin
+install:
+	@./nob install
 
-# Test runner uses library objects
-$(TEST_TARGET): $(LIB_OBJECTS) $(TESTDIR)/test_runner.c
-	$(CC) $(CFLAGS) $(LIB_OBJECTS) $(TESTDIR)/test_runner.c $(LDFLAGS) -o $@
-
-test: $(TEST_TARGET)
-	./$(TEST_TARGET)
-
-clean:
-	rm -rf $(BUILDDIR) $(TARGET) $(TEST_TARGET) test_runner
-
-# Default install location
-PREFIX = ~/.local
-BINDIR = $(PREFIX)/bin
-
-install: $(TARGET)
-	cp $(TARGET) $(BINDIR)/
-
-# Debug target
-debug: CFLAGS += -DDEBUG -g3
-debug: $(TARGET)
-
-# Static library for embedding (alternative target)
-static-lib: $(STATIC_LIB)
-
-# Header only installation
-install-headers:
-	mkdir -p /usr/local/include/gitnano
-	cp include/*.h /usr/local/include/gitnano/
+# Show help
+help:
+	@echo "GitNano Build System (nob.h)"
+	@echo "==========================="
+	@echo ""
+	@echo "Available targets:"
+	@echo "  make (or make all)  - Build GitNano"
+	@echo "  make test           - Build and run tests"
+	@echo "  make clean          - Clean build artifacts"
+	@echo "  make debug          - Build with debug symbols"
+	@echo "  make static-lib     - Build static library"
+	@echo "  make install        - Install to ~/.local/bin"
+	@echo "  make help           - Show this help"
+	@echo ""
+	@echo "You can also use the nob build system directly:"
+	@echo "  ./nob               - Build GitNano"
+	@echo "  ./nob test          - Build and run tests"
+	@echo "  ./nob clean         - Clean build artifacts"
+	@echo "  ./nob debug         - Build with debug symbols"
+	@echo "  ./nob static-lib    - Build static library"
+	@echo "  ./nob install       - Install to ~/.local/bin"
