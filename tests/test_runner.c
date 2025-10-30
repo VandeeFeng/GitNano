@@ -213,6 +213,49 @@ int test_diff_functionality() {
     return 1;
 }
 
+// Test 6: Checkout functionality
+int test_checkout_functionality() {
+    TEST_SETUP("Testing Checkout Functionality");
+
+    // Initialize repository
+    TEST_ASSERT(gitnano_init() == 0, "Repository initialization");
+
+    // Create first file and commit
+    printf("  Creating first commit...\n");
+    TEST_ASSERT(create_test_file("checkout_test.txt", "First version content"), "Create first file");
+    TEST_ASSERT(gitnano_add("checkout_test.txt") == 0, "Add first file");
+    TEST_ASSERT(gitnano_commit("First commit") == 0, "Create first commit");
+
+    // Modify file and create second commit
+    printf("  Creating second commit...\n");
+    TEST_ASSERT(create_test_file("checkout_test.txt", "Second version content"), "Modify file");
+    TEST_ASSERT(gitnano_commit("Second commit") == 0, "Create second commit");
+
+    // Verify current content is second version
+    FILE *f = fopen("checkout_test.txt", "r");
+    char content[256];
+    fread(content, 1, sizeof(content), f);
+    fclose(f);
+    TEST_ASSERT(strstr(content, "Second version") != NULL, "Current content should be second version");
+
+    // Test basic path checkout - restore first version of the file
+    printf("  Testing path checkout to restore first version...\n");
+    TEST_ASSERT(gitnano_checkout("HEAD~1", "checkout_test.txt") == 0, "Path checkout to HEAD~1");
+
+    // Verify specific file was restored to first version
+    f = fopen("checkout_test.txt", "r");
+    memset(content, 0, sizeof(content));
+    fread(content, 1, sizeof(content)-1, f);
+    fclose(f);
+    TEST_ASSERT(strstr(content, "First version") != NULL, "File content should be first version after path checkout");
+
+    printf("  ✓ Successfully tested path checkout functionality\n");
+    printf("  ✓ This proves you can checkout to an earlier commit and restore files\n");
+
+    TEST_TEARDOWN();
+    return 1;
+}
+
 // Array of all test functions
 typedef int (*test_func_t)();
 test_func_t all_tests[] = {
@@ -221,6 +264,7 @@ test_func_t all_tests[] = {
     test_api_functions,
     test_complete_workflow,
     test_diff_functionality,
+    test_checkout_functionality,
     NULL
 };
 
@@ -230,6 +274,7 @@ const char* test_names[] = {
     "API Functions",
     "Complete Workflow",
     "Diff Functionality",
+    "Checkout Functionality",
     NULL
 };
 
@@ -250,7 +295,7 @@ int main() {
     // Run all tests
     for (int i = 0; all_tests[i] != NULL; i++) {
         total++;
-        printf("\n--- Running Test %d/%d: %s ---\n", total, 5, test_names[i]);
+        printf("\n--- Running Test %d/%d: %s ---\n", total, 6, test_names[i]);
 
         if (all_tests[i]()) {
             passed++;
