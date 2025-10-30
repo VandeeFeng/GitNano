@@ -97,32 +97,28 @@ int commit_parse(const char *sha1, gitnano_commit_info *commit) {
     const char *author = strstr(data, "author ");
     if (author) {
         author += strlen("author ");
-        // Find where timestamp starts (last space in the line)
-        const char *line_end = strchr(author, '\n');
-        if (line_end) {
-            // Work backwards to find the timestamp (starts after last space)
-            const char *timestamp_start = line_end - 1;
-            while (timestamp_start > author && *timestamp_start != ' ') {
-                timestamp_start--;
-            }
-            if (timestamp_start > author) {
-                timestamp_start++; // Skip the space
 
-                // Extract timestamp
-                size_t timestamp_len = line_end - timestamp_start;
-                if (timestamp_len > sizeof(commit->timestamp) - 1) {
-                    timestamp_len = sizeof(commit->timestamp) - 1;
-                }
-                strncpy(commit->timestamp, timestamp_start, timestamp_len);
-                commit->timestamp[timestamp_len] = '\0';
+        // Use sscanf to parse author and timestamp
+        char temp_author[256];
+        char temp_timestamp[32];
 
-                // Extract author (everything before timestamp)
-                size_t author_len = timestamp_start - author - 1; // -1 to exclude space
+        if (sscanf(author, "%255s %31s", temp_author, temp_timestamp) == 2) {
+            // Successfully parsed both author and timestamp
+            strncpy(commit->author, temp_author, sizeof(commit->author) - 1);
+            commit->author[sizeof(commit->author) - 1] = '\0';
+            strncpy(commit->timestamp, temp_timestamp, sizeof(commit->timestamp) - 1);
+            commit->timestamp[sizeof(commit->timestamp) - 1] = '\0';
+        } else {
+            // Failed to parse, treat the whole line as author
+            const char *line_end = strchr(author, '\n');
+            if (line_end) {
+                size_t author_len = line_end - author;
                 if (author_len > sizeof(commit->author) - 1) {
                     author_len = sizeof(commit->author) - 1;
                 }
                 strncpy(commit->author, author, author_len);
                 commit->author[author_len] = '\0';
+                commit->timestamp[0] = '\0';
             }
         }
     }
@@ -130,15 +126,10 @@ int commit_parse(const char *sha1, gitnano_commit_info *commit) {
     const char *message = strstr(data, "\n\n");
     if (message) {
         message += 2; // Skip the two newlines
-        // Find the end of the message (next double newline or end of data)
-        const char *message_end = strstr(message, "\n\n");
-        if (!message_end) {
-            // If no double newline found, go to end of data
-            message_end = message + strlen(message);
-        }
 
-        // Calculate message length (excluding trailing newlines)
-        size_t message_len = message_end - message;
+        // Calculate message length - just read everything until end
+        size_t message_len = strlen(message);
+
         // Remove trailing newlines from message
         while (message_len > 0 && (message[message_len - 1] == '\n' || message[message_len - 1] == '\r')) {
             message_len--;

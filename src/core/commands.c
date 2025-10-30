@@ -270,7 +270,7 @@ int gitnano_checkout(const char *reference, const char *path) {
         return -1;
     }
 
-  
+
     if (path && strlen(path) > 0) {
         // Path checkout - restore specific file/directory in workspace
         printf("Restoring '%s' from %s...\n", path, reference);
@@ -390,8 +390,10 @@ int gitnano_log() {
         print_colored_hash(current_sha1);
         printf("\n");
         printf("Author: %s\n", commit.author);
-        printf("Date:   %s\n", commit.timestamp);
-        printf("\n    %s\n", commit.message);
+        char formatted_date[32];
+        format_git_timestamp(commit.timestamp, formatted_date, sizeof(formatted_date));
+        printf("Date: %s\n", formatted_date);
+        printf("Commit message: %s\n", commit.message);
 
         // Move to parent
         if (commit_get_parent(current_sha1, current_sha1) != 0) {
@@ -496,7 +498,7 @@ int gitnano_diff(const char *commit1, const char *commit2) {
                             char workspace_path[MAX_PATH];
                             get_workspace_path(workspace_path, sizeof(workspace_path));
                             snprintf(diff_cmd, sizeof(diff_cmd), "diff -q %s %s/%s >/dev/null 2>&1",
-                                   entry->d_name, workspace_path, entry->d_name);
+                                     entry->d_name, workspace_path, entry->d_name);
 
                             int result = system(diff_cmd);
                             if (result != 0) {
@@ -562,7 +564,7 @@ int gitnano_diff(const char *commit1, const char *commit2) {
                                 char workspace_path[MAX_PATH];
                                 get_workspace_path(workspace_path, sizeof(workspace_path));
                                 snprintf(diff_cmd, sizeof(diff_cmd), "diff -q %s %s/%s >/dev/null 2>&1",
-                                       entry->d_name, workspace_path, entry->d_name);
+                                         entry->d_name, workspace_path, entry->d_name);
 
                                 int result = system(diff_cmd);
                                 if (result != 0) {
@@ -597,7 +599,7 @@ int gitnano_diff(const char *commit1, const char *commit2) {
             return -1;
         }
 
-    
+
         // Change back to original directory before returning
         if (chdir(original_cwd) != 0) {
             printf("ERROR: Failed to change back to original directory\n");
@@ -639,10 +641,10 @@ int gitnano_diff(const char *commit1, const char *commit2) {
     }
 
     printf("Diff between ");
-        print_colored_hash(sha1);
-        printf(" and ");
-        print_colored_hash(sha2);
-        printf(":\n");
+    print_colored_hash(sha1);
+    printf(" and ");
+    print_colored_hash(sha2);
+    printf(":\n");
 
     if (diff->added_count > 0) {
         printf("\nAdded files (%d):\n", diff->added_count);

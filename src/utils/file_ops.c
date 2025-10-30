@@ -87,6 +87,23 @@ void get_git_timestamp(char *timestamp, size_t size) {
     strftime(timestamp, size, "%s %z", tm_info);
 }
 
+void format_git_timestamp(const char *timestamp, char *formatted, size_t size) {
+    if (!timestamp || !formatted) {
+        if (formatted) formatted[0] = '\0';
+        return;
+    }
+
+    // Parse Unix timestamp from the git timestamp format
+    time_t unix_time;
+    if (sscanf(timestamp, "%ld", &unix_time) == 1) {
+        struct tm *tm_info = localtime(&unix_time);
+        strftime(formatted, size, "%Y-%m-%d %H:%M:%S", tm_info);
+    } else {
+        strncpy(formatted, timestamp, size - 1);
+        formatted[size - 1] = '\0';
+    }
+}
+
 void get_object_path(const char *sha1, char *path) {
     snprintf(path, MAX_PATH, "%s/%.2s/%s", OBJECTS_DIR, sha1, sha1 + 2);
 }

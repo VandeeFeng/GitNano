@@ -160,6 +160,7 @@ int file_exists(const char *path);
 char *read_file(const char *path, size_t *size);
 int write_file(const char *path, const void *data, size_t size);
 void get_git_timestamp(char *timestamp, size_t size);
+void format_git_timestamp(const char *timestamp, char *formatted, size_t size);
 void get_object_path(const char *sha1, char *path);
 
 // Safe memory allocation helper functions
