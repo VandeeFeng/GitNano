@@ -498,6 +498,127 @@ int gitnano_diff(const char *commit1, const char *commit2) {
     return result;
 }
 
+// Status command - shows current directory status and sync status
+int gitnano_status() {
+    char cwd[MAX_PATH];
+    char workspace_path[MAX_PATH];
+
+    if (!getcwd(cwd, sizeof(cwd))) {
+        printf("ERROR: Failed to get current directory\n");
+        return -1;
+    }
+
+    printf("GitNano Status\n");
+    printf("==============\n");
+    printf("Current directory: %s\n", cwd);
+
+    // Try to find if there's a GitNano workspace for this directory
+    if (get_workspace_path(workspace_path, sizeof(workspace_path)) != 0) {
+        printf("No GitNano workspace found for this directory\n");
+        return 0;
+    }
+
+    printf("Workspace: %s\n", workspace_path);
+
+    // Check if workspace exists and is initialized
+    if (!workspace_exists()) {
+        printf("Workspace does not exist. Run 'gitnano init' in a GitNano repository first.\n");
+        return 0;
+    }
+
+    if (!workspace_is_initialized()) {
+        printf("Workspace exists but not initialized with .gitnano structure\n");
+        return 0;
+    }
+
+    printf("\nFile synchronization status:\n");
+
+    // Get current commit files from workspace for comparison
+    char *gitnano_dir = safe_asprintf("%s/.gitnano", workspace_path);
+
+    file_entry *workspace_files = NULL;
+    int has_commits = 0;
+
+    // Change to workspace to get current commit files if there are commits
+    if (file_exists(gitnano_dir)) {
+        if (chdir(workspace_path) == 0) {
+            char current_sha1[SHA1_HEX_SIZE];
+            if (get_current_commit(current_sha1) == 0) {
+                has_commits = 1;
+                char tree_sha1[SHA1_HEX_SIZE];
+                if (commit_get_tree(current_sha1, tree_sha1) == 0) {
+                    collect_tree_files(tree_sha1, &workspace_files);
+                }
+            }
+            chdir(cwd);  // Change back to original directory
+        }
+    }
+
+    int added_count = 0, modified_count = 0, deleted_count = 0;
+
+    if (has_commits && workspace_files) {
+        collect_working_changes(workspace_files, &added_count, &modified_count, &deleted_count);
+
+        display_diff_summary(added_count, modified_count, deleted_count, workspace_files);
+    } else {
+        printf("\nNo commits found. All files are new:\n");
+
+        collect_working_changes(NULL, &added_count, &modified_count, &deleted_count);
+
+        display_diff_summary(added_count, modified_count, deleted_count, NULL);
+    }
+
+    // Calculate total files and summary
+    int total_files = added_count + modified_count;
+    int unsynced_files = added_count + modified_count + deleted_count;
+
+    printf("\nSummary:\n");
+    printf("  Total files: %d\n", total_files);
+    printf("  Synced files: %d\n", total_files - unsynced_files);
+    printf("  Unsynced files: %d\n", unsynced_files);
+
+    if (unsynced_files > 0) {
+        printf("\nWarning: %d file(s) have changes not synchronized to workspace\n", unsynced_files);
+        printf("Run 'gitnano add <file>' to sync specific files\n");
+        printf("Run 'gitnano commit <message>' to sync all files and create commit\n");
+    } else {
+        printf("\nAll files are synchronized with workspace\n");
+    }
+
+    // Show GitNano repository status if workspace has .gitnano
+    if (file_exists(gitnano_dir)) {
+        printf("\nGitNano repository status:\n");
+
+        // Change to workspace directory to check repository status
+        if (chdir(workspace_path) == 0) {
+            char current_sha1[SHA1_HEX_SIZE];
+            if (get_current_commit(current_sha1) == 0) {
+                printf("  Current commit: ");
+                print_colored_hash(current_sha1);
+                printf("\n");
+
+                char ref[MAX_PATH];
+                if (get_head_ref(ref) == 0 && strncmp(ref, "refs/heads/", 11) == 0) {
+                    printf("  Current branch: %s\n", ref + 11);
+                }
+            } else {
+                printf("  No commits found\n");
+            }
+
+            // Change back to original directory
+            chdir(cwd);
+        }
+    }
+
+    // Clean up
+    free(gitnano_dir);
+    if (workspace_files) {
+        free_file_list(workspace_files);
+    }
+
+    return 0;
+}
+
 // Auto-sync files based on diff results - used by commit
 static int auto_sync_working_files() {
     // Get current working directory
@@ -554,10 +675,12 @@ void print_usage() {
     printf("  gitnano checkout <ref> [path]   Checkout commit or restore files (auto-syncs to original)\n");
     printf("  gitnano log                     Show commit history\n");
     printf("  gitnano diff [sha1] [sha2]      Show differences between commits\n");
+    printf("  gitnano status                  Show current directory and workspace sync status\n");
     printf("\nHow it works:\n");
     printf("  - All files are automatically copied to workspace on init\n");
     printf("  - 'gitnano add' auto-syncs files to workspace before staging\n");
     printf("  - 'gitnano checkout' auto-syncs restored files to original directory\n");
+    printf("  - 'gitnano status' shows sync status between working directory and workspace\n");
     printf("  - Workspace is located at: ~/GitNano/[project-name]/\n");
     printf("\nReferences can be:\n");
     printf("  - Full SHA1 (40 chars)\n");
@@ -632,6 +755,15 @@ static int handle_diff(int argc, char *argv[]) {
     return gitnano_diff(sha1, sha2);
 }
 
+static int handle_status(int argc, char *argv[]) {
+    if (argc > 2) {
+        printf("Usage: gitnano status\n");
+        printf("Too many arguments: %s\n", argv[2]);
+        return 1;
+    }
+    return gitnano_status();
+}
+
 // Array of commands
 const command_t commands[] = {
     {"init", handle_init},
@@ -640,5 +772,6 @@ const command_t commands[] = {
     {"checkout", handle_checkout},
     {"log", handle_log},
     {"diff", handle_diff},
+    {"status", handle_status},
     {NULL, NULL} // Sentinel to mark the end of the array
 };

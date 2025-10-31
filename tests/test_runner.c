@@ -133,7 +133,7 @@ int test_api_functions() {
 
     // Test repository status
     gitnano_status_info status;
-    TEST_ASSERT(gitnano_status(&status) == 0, "Get repository status");
+    TEST_ASSERT(gitnano_get_status(&status) == 0, "Get repository status");
 
     printf("  Repository Status:\n");
     printf("    Is repository: %s\n", status.is_repo ? "Yes" : "No");

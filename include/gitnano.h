@@ -104,6 +104,7 @@ int gitnano_commit(const char *message);
 int gitnano_checkout(const char *reference, const char *path);
 int gitnano_log();
 int gitnano_diff(const char *commit1, const char *commit2);
+int gitnano_status();
 void print_usage();
 
 // Reference management functions (refs.c)
@@ -199,6 +200,6 @@ int gitnano_restore_snapshot(const char *snapshot_id);
 int gitnano_compare_snapshots(const char *snapshot1, const char *snapshot2,
                               gitnano_diff_result **diff);
 void gitnano_free_diff(gitnano_diff_result *diff);
-int gitnano_status(gitnano_status_info *status);
+int gitnano_get_status(gitnano_status_info *status);
 
 #endif // GITNANO_H

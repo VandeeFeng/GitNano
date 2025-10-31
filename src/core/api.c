@@ -268,7 +268,7 @@ void gitnano_free_diff(gitnano_diff_result *diff) {
 }
 
 // Get repository status
-int gitnano_status(gitnano_status_info *status) {
+int gitnano_get_status(gitnano_status_info *status) {
     if (!status) return -1;
 
     memset(status, 0, sizeof(gitnano_status_info));
