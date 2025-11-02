@@ -11,6 +11,12 @@ GitNano differs from standard Git in the following key ways:
 1.  **Isolated Workspace**:
     `gitnano` maintains an isolated workspace in the `~/GitNano/[project-name]/` directory. When you run `gitnano add` or `gitnano checkout`, files are automatically synchronized between your project directory and this isolated workspace. This design separates the version control metadata from your working directory.
 
+    You can customize the workspace location by setting the `GITNANO_DIR` environment variable:
+    ```bash
+    export GITNANO_DIR="/path/to/your/workspace"
+    ```
+    If not set, it defaults to `~/GitNano`.
+
 2.  **Simplified Staging Area**:
     The staging area in `gitnano` (the `.gitnano/index` file) is a simple text file that records the SHA-1 hash and path of each file.
 

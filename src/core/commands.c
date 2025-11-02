@@ -681,7 +681,7 @@ void print_usage() {
     printf("  - 'gitnano add' auto-syncs files to workspace before staging\n");
     printf("  - 'gitnano checkout' auto-syncs restored files to original directory\n");
     printf("  - 'gitnano status' shows sync status between working directory and workspace\n");
-    printf("  - Workspace is located at: ~/GitNano/[project-name]/\n");
+    printf("  - Workspace is located at: ~/GitNano/[project-name]/ (or $GITNANO_DIR/[project-name]/)\n");
     printf("\nReferences can be:\n");
     printf("  - Full SHA1 (40 chars)\n");
     printf("  - Partial SHA1 (4-7 chars)\n");

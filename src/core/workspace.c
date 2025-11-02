@@ -7,8 +7,17 @@
 // Forward declarations
 static int sync_recursive(const char *src_path, const char *dst_base);
 
-// Expand ~ to home directory
+// Expand ~ to home directory or resolve GITNANO_DIR
 static void expand_home_dir(const char *path, char *expanded, size_t size) {
+    if (strcmp(path, WORKSPACE_BASE_DIR) == 0) {
+        const char *gitnano_dir = getenv("GITNANO_DIR");
+        if (gitnano_dir && strlen(gitnano_dir) > 0) {
+            strncpy(expanded, gitnano_dir, size - 1);
+            expanded[size - 1] = '\0';
+            return;
+        }
+    }
+
     if (path[0] == '~') {
         const char *home = getenv("HOME");
         if (!home) {
